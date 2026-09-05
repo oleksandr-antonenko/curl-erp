@@ -1,0 +1,24 @@
+{
+  "name": "@erp/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "BUSL-1.1",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tenancy": "./dist/tenancy/index.js",
+    "./change-feed": "./dist/change-feed/index.js",
+    "./auth": "./dist/auth/index.js",
+    "./channels": "./dist/channels/index.js",
+    "./testing": "./dist/testing/index.js",
+    "./runtime": "./dist/tenancy/runtime.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --build"
+  },
+  "bin": {
+    "erp-tenant": "./dist/cli/tenant.js"
+  }
+}

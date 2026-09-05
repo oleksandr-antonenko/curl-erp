@@ -16,9 +16,9 @@ const ONE_TENANT = JSON.stringify({
   version: 1,
   tenants: [
     {
-      id: 'curlmakers',
-      name: 'CurlMakers',
-      databaseUrl: 'postgres://user:pass@localhost:5432/curlmakers',
+      id: 'northwind',
+      name: 'Northwind',
+      databaseUrl: 'postgres://user:pass@localhost:5432/northwind',
       status: 'active',
       entitlements: ['channel-storefront'],
     },
@@ -29,7 +29,7 @@ describe('control plane document', () => {
   it('accepts a single-tenant registry', () => {
     const document = parseControlPlaneFile(JSON.parse(ONE_TENANT))
     expect(document.tenants).toHaveLength(1)
-    expect(document.tenants[0]?.id).toBe('curlmakers')
+    expect(document.tenants[0]?.id).toBe('northwind')
     expect(document.tenants[0]?.status).toBe('active')
   })
 
@@ -97,7 +97,7 @@ describe('file control plane', () => {
     expect(plane.kind).toBe('file')
     const tenants = await plane.list()
     expect(tenants).toHaveLength(1)
-    expect((await plane.get('curlmakers')).name).toBe('CurlMakers')
+    expect((await plane.get('northwind')).name).toBe('Northwind')
   })
 
   it('treats a missing file as an empty registry', async () => {
@@ -140,7 +140,7 @@ describe('file control plane', () => {
     const plane = new FileControlPlane(path)
     await expect(
       plane.register({
-        id: 'curlmakers',
+        id: 'northwind',
         name: 'Duplicate',
         databaseUrl: 'postgres://localhost/other',
         status: 'active',
@@ -152,8 +152,8 @@ describe('file control plane', () => {
 
   it('leaves the file readable after a write', async () => {
     const plane = new FileControlPlane(path)
-    await plane.update('curlmakers', { name: 'CurlMakers UA' })
+    await plane.update('northwind', { name: 'Northwind Trading' })
     const written = JSON.parse(await readFile(path, 'utf8')) as unknown
-    expect(parseControlPlaneFile(written).tenants[0]?.name).toBe('CurlMakers UA')
+    expect(parseControlPlaneFile(written).tenants[0]?.name).toBe('Northwind Trading')
   })
 })

@@ -3,7 +3,7 @@ import type { SalesChannelAdapter } from './contract.js'
 export interface ChannelConfiguration {
   /** Stable channel id, used in mappings and queues. */
   readonly id: string
-  /** Module to load the adapter from, e.g. `@erp/channel-storefront`. */
+  /** Module to load the adapter from, e.g. `@curl-erp/channel-storefront`. */
   readonly resolve: string
   readonly options?: Readonly<Record<string, unknown>>
   readonly enabled?: boolean

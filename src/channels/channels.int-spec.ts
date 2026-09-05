@@ -77,13 +77,13 @@ describe('sales channels', () => {
       const registry = new ChannelRegistry()
       const statuses = await registry.load(
         [
-          { id: 'missing', resolve: '@erp/channel-not-installed' },
+          { id: 'missing', resolve: '@curl-erp/channel-not-installed' },
           { id: 'present', resolve: 'memory' },
         ],
         async (specifier) =>
           specifier === 'memory'
             ? { createChannelAdapter: () => new MemoryChannelAdapter({ id: 'present' }) }
-            : Promise.reject(new Error("Cannot find module '@erp/channel-not-installed'")),
+            : Promise.reject(new Error("Cannot find module '@curl-erp/channel-not-installed'")),
       )
 
       const byId = new Map(statuses.map((status) => [status.id, status]))

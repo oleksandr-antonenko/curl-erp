@@ -72,7 +72,7 @@ a maintenance error rather than served against a schema the code does not match.
 
 ```bash
 # Needs pg_dump and pg_restore on the PATH.
-node -e "import('@erp/core/tenancy').then(async ({ backupTenant, controlPlaneFromEnv }) =>
+node -e "import('@curl-erp/core/tenancy').then(async ({ backupTenant, controlPlaneFromEnv }) =>
   backupTenant('acme', { controlPlane: controlPlaneFromEnv(), outputPath: './acme.dump' }))"
 ```
 
@@ -86,7 +86,7 @@ nothing: a decision taken in an adapter is a decision the next channel has to
 take again, differently.
 
 ```ts
-import type { SalesChannelAdapter } from '@erp/core/channels'
+import type { SalesChannelAdapter } from '@curl-erp/core/channels'
 
 export function createChannelAdapter(options: Record<string, unknown>): SalesChannelAdapter {
   return {
@@ -126,7 +126,7 @@ The contract suite takes its test primitives as arguments, so it runs under any
 test runner:
 
 ```ts
-import { runChannelContractTests } from '@erp/core/channels'
+import { runChannelContractTests } from '@curl-erp/core/channels'
 import { describe, expect, it } from 'vitest'
 
 runChannelContractTests({
@@ -137,7 +137,7 @@ runChannelContractTests({
 })
 ```
 
-`MemoryChannelAdapter` in `@erp/core/channels` is the reference implementation
+`MemoryChannelAdapter` in `@curl-erp/core/channels` is the reference implementation
 and is held to the same suite.
 
 ### Installing it

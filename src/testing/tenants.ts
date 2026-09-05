@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FileControlPlane } from '../tenancy/control-plane.js'
 import { TenantDatabaseRegistry } from '../tenancy/database-registry.js'
+import { migrateTenant } from '../tenancy/migrations.js'
 import type { TenantRecord } from '../tenancy/tenant.js'
 import { createTemporaryDatabase, type TemporaryDatabase } from './database.js'
 
@@ -27,8 +28,14 @@ export interface TenantFixtureSpec {
   readonly hosts?: readonly string[]
 }
 
+export interface TenantFixtureOptions {
+  /** Applies every migration to each tenant, as a real installation would. */
+  readonly migrate?: boolean
+}
+
 export async function createTenantFixture(
   specs: readonly (string | TenantFixtureSpec)[],
+  options: TenantFixtureOptions = {},
 ): Promise<TenantFixture> {
   const dir = await mkdtemp(join(tmpdir(), 'erp-tenants-'))
   const controlPlane = new FileControlPlane(join(dir, 'control-plane.json'))
@@ -56,6 +63,12 @@ export async function createTenantFixture(
   }
 
   const registry = new TenantDatabaseRegistry(controlPlane)
+
+  if (options.migrate === true) {
+    for (const tenant of tenants) {
+      await migrateTenant(registry.connectTo(tenant).db)
+    }
+  }
 
   return {
     controlPlane,

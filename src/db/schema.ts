@@ -3,4 +3,6 @@
  * only collects them, so the shape of the database is always readable in one
  * place without any module reaching into another's schema.
  */
+
+export * from '../change-feed/schema.js'
 export * from '../tenancy/schema.js'

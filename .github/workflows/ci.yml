@@ -29,6 +29,16 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm install
+      # The runner image ships an older client than the service container, and
+      # pg_dump refuses to dump a server newer than itself.
+      - name: PostgreSQL 17 client tools
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test

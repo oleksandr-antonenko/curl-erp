@@ -1,0 +1,34 @@
+# Development and test dependencies. Ports are deliberately non-default so this
+# stack never collides with another PostgreSQL or Redis already running on the
+# developer's machine.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: erp-dev-postgres
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp
+      POSTGRES_DB: erp_control
+    ports:
+      - '55432:5432'
+    volumes:
+      - erp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U erp -d erp_control']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: erp-dev-redis
+    ports:
+      - '56379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  erp-pgdata:

@@ -16,8 +16,14 @@
     "./runtime": "./dist/tenancy/runtime.js"
   },
   "scripts": {
-    "typecheck": "tsc --build",
     "build": "tsc --build",
+    "typecheck": "tsc --build && tsc -p tsconfig.test.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d",
+    "db:down": "docker compose -f docker-compose.dev.yml down",
     "prepare": "tsc --build"
   },
   "bin": {
@@ -49,5 +55,13 @@
     "pg": "^8.23.0",
     "zod": "^4.5.4"
   },
-  "peerDependencies": {}
+  "peerDependencies": {},
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
 }

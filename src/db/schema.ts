@@ -4,5 +4,6 @@
  * place without any module reaching into another's schema.
  */
 
+export * from '../auth/schema.js'
 export * from '../change-feed/schema.js'
 export * from '../tenancy/schema.js'

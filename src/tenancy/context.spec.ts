@@ -18,6 +18,7 @@ function tenant(id: string): TenantRecord {
     id,
     name: id,
     databaseUrl: `postgres://localhost/${id}`,
+    hosts: [],
     status: 'active',
     entitlements: [],
   }

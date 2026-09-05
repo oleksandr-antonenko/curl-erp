@@ -27,7 +27,8 @@ describe('secrets cipher', () => {
     const cipher = SecretsCipher.fromBase64Key(key())
     const encrypted = cipher.encrypt('token')
     const raw = Buffer.from(encrypted, 'base64')
-    raw[raw.length - 1] ^= 0xff
+    // Flip a bit in the authentication tag.
+    raw.writeUInt8(raw.readUInt8(raw.length - 1) ^ 0xff, raw.length - 1)
     expect(() => cipher.decrypt(raw.toString('base64'))).toThrow(SecretsDecryptionError)
   })
 

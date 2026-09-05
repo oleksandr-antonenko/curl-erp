@@ -1,0 +1,1 @@
+ALTER TABLE "staff_roles" ADD COLUMN "requires_two_factor" boolean DEFAULT false NOT NULL;

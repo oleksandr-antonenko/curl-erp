@@ -45,10 +45,10 @@ export {
   type TenantJobStatus,
 } from './jobs.js'
 export {
-  MIGRATIONS_FOLDER,
   type MigrationReport,
   migrateAllTenants,
   migrateTenant,
+  migrationsFolder,
   readRequiredMigrations,
   readSchemaVersion,
   reportSchemaVersions,

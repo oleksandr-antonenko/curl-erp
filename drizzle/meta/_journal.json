@@ -15,6 +15,34 @@
       "when": 1788592646358,
       "tag": "0001_change_feed",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788592967723,
+      "tag": "0002_staff_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788593087613,
+      "tag": "0003_audit_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788593745701,
+      "tag": "0004_auth_1_7_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788593984675,
+      "tag": "0005_role_two_factor",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { Client } from 'pg'
 import type { ControlPlane } from './control-plane.js'
 import { TenantDatabaseRegistry } from './database-registry.js'
-import { MIGRATIONS_FOLDER, migrateTenant, type SchemaVersion } from './migrations.js'
+import { migrateTenant, migrationsFolder, type SchemaVersion } from './migrations.js'
 import { type TenantRecord, tenantIdSchema } from './tenant.js'
 
 /** Physical database name for a tenant. Only characters safe as an identifier. */
@@ -95,7 +95,7 @@ export interface ProvisionedTenant {
 export async function provisionTenant(options: ProvisionTenantOptions): Promise<ProvisionedTenant> {
   const id = tenantIdSchema.parse(options.id)
   const databaseName = options.databaseName ?? databaseNameFor(id)
-  const migrationsFolder = options.migrationsFolder ?? MIGRATIONS_FOLDER
+  const folder = options.migrationsFolder ?? migrationsFolder()
 
   if (await options.controlPlane.find(id)) {
     throw new TenantProvisioningError(`Tenant "${id}" is already registered`)
@@ -124,7 +124,7 @@ export async function provisionTenant(options: ProvisionTenantOptions): Promise<
 
   try {
     const connection = registry.connectTo({ ...record, databaseUrl: connectUrl })
-    const version = await migrateTenant(connection.db, migrationsFolder)
+    const version = await migrateTenant(connection.db, folder)
     await registry.close()
 
     const tenant = await options.controlPlane.register(record)

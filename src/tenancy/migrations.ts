@@ -7,8 +7,25 @@ import type { ControlPlane } from './control-plane.js'
 import type { TenantDatabaseRegistry } from './database-registry.js'
 import { type TenantJobResult, TenantJobRunner } from './jobs.js'
 
-/** Location of the generated SQL migrations. Resolves the same from src and dist. */
-export const MIGRATIONS_FOLDER = resolve(import.meta.dirname, '../../drizzle')
+/**
+ * Location of the generated SQL migrations.
+ *
+ * Resolved on call, not on import: a bundler rewrites modules without giving
+ * them a directory, so a path computed at module load turns into a crash at
+ * startup in any packaged build - and only there, which is the worst place to
+ * find out.
+ */
+export function migrationsFolder(): string {
+  const here = import.meta.dirname
+  if (here === undefined || here === '') {
+    throw new Error(
+      'Cannot locate the migrations folder in this environment. ' +
+        'Pass the folder explicitly to the migration functions.',
+    )
+  }
+  // Same result from src and from dist: both are one level under the package.
+  return resolve(here, '../../drizzle')
+}
 
 /**
  * Finds a PostgreSQL error code anywhere in the cause chain.
@@ -39,8 +56,8 @@ interface Journal {
 }
 
 /** Migrations the running code expects, read from the generated journal. */
-export async function readRequiredMigrations(folder: string = MIGRATIONS_FOLDER): Promise<readonly string[]> {
-  const raw = await readFile(join(folder, 'meta', '_journal.json'), 'utf8')
+export async function readRequiredMigrations(folder?: string): Promise<readonly string[]> {
+  const raw = await readFile(join(folder ?? migrationsFolder(), 'meta', '_journal.json'), 'utf8')
   const journal = JSON.parse(raw) as Journal
   return [...journal.entries].sort((a, b) => a.idx - b.idx).map((entry) => entry.tag)
 }
@@ -63,10 +80,7 @@ export interface SchemaVersion {
  * lets an operator see the whole estate at once, which is the point of the
  * report.
  */
-export async function readSchemaVersion(
-  db: Database,
-  folder: string = MIGRATIONS_FOLDER,
-): Promise<SchemaVersion> {
+export async function readSchemaVersion(db: Database, folder?: string): Promise<SchemaVersion> {
   const required = (await readRequiredMigrations(folder)).length
 
   const result = await db
@@ -109,11 +123,8 @@ export class SchemaOutOfDateError extends Error {
 }
 
 /** Applies every pending migration to one tenant database. */
-export async function migrateTenant(
-  db: Database,
-  folder: string = MIGRATIONS_FOLDER,
-): Promise<SchemaVersion> {
-  await migrate(db, { migrationsFolder: folder })
+export async function migrateTenant(db: Database, folder?: string): Promise<SchemaVersion> {
+  await migrate(db, { migrationsFolder: folder ?? migrationsFolder() })
   return readSchemaVersion(db, folder)
 }
 
@@ -138,7 +149,7 @@ export interface MigrationReport {
 export async function migrateAllTenants(
   controlPlane: ControlPlane,
   registry: TenantDatabaseRegistry,
-  folder: string = MIGRATIONS_FOLDER,
+  folder?: string,
 ): Promise<MigrationReport> {
   const versions = new Map<string, SchemaVersion>()
   const runner = new TenantJobRunner(controlPlane, registry)
@@ -164,7 +175,7 @@ export async function migrateAllTenants(
 export async function reportSchemaVersions(
   controlPlane: ControlPlane,
   registry: TenantDatabaseRegistry,
-  folder: string = MIGRATIONS_FOLDER,
+  folder?: string,
 ): Promise<readonly { tenantId: string; version: SchemaVersion | null; error?: string }[]> {
   const tenants = await controlPlane.list()
   return Promise.all(
@@ -211,7 +222,7 @@ export class SchemaVersionGuard {
       throw new SchemaOutOfDateError(tenantId, cached.version)
     }
 
-    const version = await readSchemaVersion(db, this.options.folder ?? MIGRATIONS_FOLDER)
+    const version = await readSchemaVersion(db, this.options.folder)
     if (version.upToDate) {
       this.behind.delete(tenantId)
       this.upToDate.add(tenantId)

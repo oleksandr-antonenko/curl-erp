@@ -15,7 +15,7 @@ describe('change feed', () => {
   beforeAll(async () => {
     fixture = await createTenantFixture(['feed'], { migrate: true })
     db = fixture.registry.connectTo(fixture.tenant('feed')).db
-    await db.execute(sql`create table products (id text primary key, title text not null)`)
+    await db.execute(sql`create table feed_probe (id text primary key, title text not null)`)
   })
 
   afterAll(async () => {
@@ -26,7 +26,7 @@ describe('change feed', () => {
     await db.delete(feedFailures)
     await db.delete(feedConsumers)
     await db.delete(changeEvents)
-    await db.execute(sql`delete from products`)
+    await db.execute(sql`delete from feed_probe`)
   })
 
   const emit = async (entityId: string, kind: 'created' | 'updated' | 'deleted' = 'updated') =>
@@ -46,27 +46,27 @@ describe('change feed', () => {
     it('leaves no event when the change is rolled back', async () => {
       await expect(
         journaled(db, async (tx, journal) => {
-          await tx.execute(sql`insert into products (id, title) values ('p2', 'Shampoo')`)
+          await tx.execute(sql`insert into feed_probe (id, title) values ('p2', 'Shampoo')`)
           journal.record({ entityType: 'product', entityId: 'p2', kind: 'created' })
           throw new Error('changed my mind')
         }),
       ).rejects.toThrow('changed my mind')
 
       expect(await new ChangeFeedReader(db).read(0)).toEqual([])
-      const products = await db.execute(sql`select id from products`)
-      expect(products.rows).toEqual([])
+      const probed = await db.execute(sql`select id from feed_probe`)
+      expect(probed.rows).toEqual([])
     })
 
     it('keeps the change and its event together when it commits', async () => {
       await journaled(db, async (tx, journal) => {
-        await tx.execute(sql`insert into products (id, title) values ('p3', 'Mask')`)
+        await tx.execute(sql`insert into feed_probe (id, title) values ('p3', 'Mask')`)
         journal.record({ entityType: 'product', entityId: 'p3', kind: 'created' })
       })
 
       const events = await new ChangeFeedReader(db).read(0)
       expect(events.map((event) => event.entityId)).toEqual(['p3'])
-      const products = await db.execute<{ id: string }>(sql`select id from products`)
-      expect(products.rows.map((row) => row.id)).toEqual(['p3'])
+      const probed = await db.execute<{ id: string }>(sql`select id from feed_probe`)
+      expect(probed.rows.map((row) => row.id)).toEqual(['p3'])
     })
 
     it('records who changed what, without recording the values', async () => {

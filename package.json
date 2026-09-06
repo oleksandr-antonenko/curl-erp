@@ -13,7 +13,9 @@
     "./auth": "./dist/auth/index.js",
     "./channels": "./dist/channels/index.js",
     "./testing": "./dist/testing/index.js",
-    "./runtime": "./dist/tenancy/runtime.js"
+    "./runtime": "./dist/tenancy/runtime.js",
+    "./catalog": "./dist/catalog/index.js",
+    "./pricing": "./dist/pricing/index.js"
   },
   "scripts": {
     "build": "tsc --build",

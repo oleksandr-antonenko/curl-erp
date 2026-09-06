@@ -57,6 +57,13 @@
       "when": 1788594368549,
       "tag": "0007_channel_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788737740329,
+      "tag": "0008_catalog_and_pricing",
+      "breakpoints": true
     }
   ]
 }

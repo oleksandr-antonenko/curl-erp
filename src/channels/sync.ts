@@ -91,6 +91,8 @@ export class ChannelSync {
         return this.onVariantChanged(event)
       case 'stock':
         return this.onStockChanged(event.entityId)
+      case 'price':
+        return this.onPriceChanged(event)
       default:
         // Not everything in the journal concerns a shop: ledger entries and
         // staff changes pass through untouched.
@@ -120,6 +122,22 @@ export class ChannelSync {
     if (productId === null) return false
     await this.outbound.enqueue(this.channel, 'product', productId, { productLocalId: productId })
     return true
+  }
+
+  /**
+   * A price change republishes the product the price belongs to.
+   *
+   * Every price change, not only the ones in this channel's list: which list a
+   * channel presents is the projection's business, and a sync that tried to
+   * decide it here would need a second copy of that rule. Republishing a
+   * product whose shown price did not change costs one call; failing to
+   * republish one whose price did leaves a stale price on the shelf.
+   */
+  private async onPriceChanged(event: ChangeEvent): Promise<boolean> {
+    // The journal names a price as "<variant>:<price list>".
+    const variantLocalId = event.entityId.split(':')[0] ?? ''
+    if (variantLocalId === '') return false
+    return this.onVariantChanged({ ...event, entityId: variantLocalId })
   }
 
   private async onStockChanged(variantLocalId: string): Promise<boolean> {

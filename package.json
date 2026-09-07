@@ -21,7 +21,8 @@
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --build && tsc -p tsconfig.test.json",
-    "lint": "biome check .",
+    "lint": "biome check . && npm run check:vendor",
+    "check:vendor": "tsx scripts/check-vendor-neutrality.ts",
     "format": "biome check --write .",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",

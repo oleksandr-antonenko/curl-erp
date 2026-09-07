@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import { recordChange } from '../change-feed/record.js'
 import type { Executor } from '../change-feed/types.js'
 import type { Database } from '../db/client.js'
+import { priceLists, variantPrices } from '../pricing/schema.js'
 import { CatalogError, DuplicateIdentifierError, NotFoundError } from './errors.js'
 import {
   brands,
@@ -92,9 +93,20 @@ export interface CatalogBrowseFilter {
   readonly language?: string
   readonly limit?: number
   readonly offset?: number
+  /**
+   * Price lists to include amounts from. Empty or absent means none.
+   *
+   * Opt-in rather than always-on, and enforced in the query rather than in
+   * whatever draws the screen: a caller who may not see prices does not
+   * receive them, so there is no number to leak from a payload nobody
+   * thought of as disclosing anything.
+   */
+  readonly priceListCodes?: readonly string[]
+  /** Include the planned purchase price. Only for a caller holding `cost.read`. */
+  readonly withCost?: boolean
 }
 
-/** One row of a catalog listing. Deliberately without any cost or price. */
+/** One row of a catalog listing. */
 export interface CatalogListing {
   readonly id: string
   readonly legacyId: string | null
@@ -102,8 +114,13 @@ export interface CatalogListing {
   readonly brandId: string | null
   readonly brandName: string | null
   readonly title: string | null
+  /** The primary variant: lowest position, and the one the amounts belong to. */
   readonly sku: string
   readonly variantCount: number
+  /** Amounts by price list code, holding only the lists that were asked for. */
+  readonly pricesMinor: Readonly<Record<string, number>>
+  /** Present only when asked for; `null` when the variant has no purchase price. */
+  readonly purchaseMinor?: number | null
 }
 
 export interface CatalogPage {
@@ -126,6 +143,43 @@ export interface CatalogLanguages {
  * make anyone think about variants; the model still keeps the distinction,
  * because a system that counts products cannot later be taught to count sizes.
  */
+interface BrowseRow extends Record<string, unknown> {
+  id: string
+  legacy_id: string | null
+  status: string
+  brand_id: string | null
+  brand_name: string | null
+  title: string | null
+  sku: string | null
+  purchase_minor: number | string | null
+  variant_count: number
+  prices: unknown
+}
+
+/** One amount, whichever way the driver handed it over. */
+function toAmount(value: number | string | null): number | null {
+  if (value === null) return null
+  const numeric = typeof value === 'string' ? Number(value) : value
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+/**
+ * Amounts out of the aggregated JSON.
+ *
+ * A bigint reaches JavaScript as a string often enough that trusting the
+ * driver here would leave a price rendered as "34900" beside one rendered as
+ * 34900. Coerced once, at the edge.
+ */
+function toAmounts(value: unknown): Record<string, number> {
+  if (value === null || typeof value !== 'object') return {}
+  const amounts: Record<string, number> = {}
+  for (const [code, amount] of Object.entries(value as Record<string, unknown>)) {
+    const numeric = typeof amount === 'string' ? Number(amount) : amount
+    if (typeof numeric === 'number' && Number.isFinite(numeric)) amounts[code] = numeric
+  }
+  return amounts
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export class Catalog {
@@ -311,61 +365,81 @@ export class Catalog {
   async browse(filter: CatalogBrowseFilter = {}): Promise<CatalogPage> {
     const language = filter.language ?? (await this.languages()).fallback
     const where = await this.browseConditions(filter, language)
+    const codes = filter.priceListCodes ?? []
 
-    const text = this.db
-      .select({
-        productId: productTexts.productId,
-        title: productTexts.title,
-      })
-      .from(productTexts)
-      .where(eq(productTexts.language, language))
-      .as('text')
-
-    const rows = await this.db
-      .select({
-        id: products.id,
-        legacyId: products.legacyId,
-        status: products.status,
-        brandId: products.brandId,
-        brandName: brands.name,
-        title: text.title,
-        sku: sql<string>`min(${productVariants.sku})`,
-        variantCount: sql<number>`count(distinct ${productVariants.id})::int`,
-      })
-      .from(products)
-      .leftJoin(brands, eq(brands.id, products.brandId))
-      .leftJoin(text, eq(text.productId, products.id))
-      .leftJoin(productVariants, eq(productVariants.productId, products.id))
-      .where(where)
-      .groupBy(products.id, products.legacyId, products.status, products.brandId, brands.name, text.title)
-      .orderBy(asc(sql`coalesce(${text.title}, '')`), asc(products.id))
-      .limit(filter.limit ?? 50)
-      .offset(filter.offset ?? 0)
+    // One designated variant per row, the lowest by position, and both the SKU
+    // and the amounts come from it. Aggregating across variants instead would
+    // put one variant's SKU next to another variant's price, which is the kind
+    // of row somebody quotes from.
+    const rows = await this.db.execute<BrowseRow>(sql`
+      select
+        ${products.id} as id,
+        ${products.legacyId} as legacy_id,
+        ${products.status} as status,
+        ${products.brandId} as brand_id,
+        brand.name as brand_name,
+        text.title as title,
+        variant.sku as sku,
+        variant.planned_purchase_price_minor as purchase_minor,
+        (
+          select count(*)::int from ${productVariants}
+          where ${productVariants.productId} = ${products.id}
+        ) as variant_count,
+        ${codes.length === 0 ? sql`'{}'::jsonb` : sql`coalesce(priced.amounts, '{}'::jsonb)`} as prices
+      from ${products}
+      left join ${brands} as brand on brand.id = ${products.brandId}
+      left join ${productTexts} as text
+        on text.product_id = ${products.id} and text.language = ${language}
+      left join lateral (
+        select v.id, v.sku, v.planned_purchase_price_minor
+        from ${productVariants} as v
+        where v.product_id = ${products.id}
+        order by v.position asc, v.id asc
+        limit 1
+      ) as variant on true
+      ${
+        codes.length === 0
+          ? sql``
+          : sql`
+      left join lateral (
+        select jsonb_object_agg(${priceLists.code}, ${variantPrices.amountMinor}) as amounts
+        from ${variantPrices}
+        join ${priceLists} on ${priceLists.id} = ${variantPrices.priceListId}
+        where ${variantPrices.variantId} = variant.id
+          and ${inArray(priceLists.code, [...codes])}
+      ) as priced on true`
+      }
+      ${where === undefined ? sql`` : sql`where ${where}`}
+      order by coalesce(text.title, '') asc, ${products.id} asc
+      limit ${filter.limit ?? 50}
+      offset ${filter.offset ?? 0}
+    `)
 
     const [counted] = await this.db
       .select({ total: sql<number>`count(distinct ${products.id})::int` })
       .from(products)
-      .leftJoin(text, eq(text.productId, products.id))
-      .leftJoin(productVariants, eq(productVariants.productId, products.id))
       .where(where)
 
     return {
       language,
       total: counted?.total ?? 0,
-      rows: rows.map((row) => ({
+      rows: rows.rows.map((row) => ({
         id: row.id,
-        legacyId: row.legacyId,
+        legacyId: row.legacy_id,
         status: row.status as ProductStatus,
-        brandId: row.brandId,
-        brandName: row.brandName,
+        brandId: row.brand_id,
+        brandName: row.brand_name,
         title: row.title,
-        sku: row.sku,
-        variantCount: row.variantCount,
+        sku: row.sku ?? '',
+        variantCount: row.variant_count,
+        pricesMinor: toAmounts(row.prices),
+        // Omitted rather than nulled when not asked for: a key that is present
+        // and empty still tells the reader a number exists.
+        ...(filter.withCost === true ? { purchaseMinor: toAmount(row.purchase_minor) } : {}),
       })),
     }
   }
 
-  /** The filters a browse applies, as one condition. */
   private async browseConditions(filter: CatalogBrowseFilter, language: string): Promise<SQL | undefined> {
     const conditions: SQL[] = []
 

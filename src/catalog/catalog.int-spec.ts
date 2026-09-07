@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeFeedReader } from '../change-feed/feed.js'
 import { changeEvents } from '../change-feed/schema.js'
 import type { Database } from '../db/client.js'
+import { Pricing } from '../pricing/pricing.js'
 import { createTenantFixture, type TenantFixture } from '../testing/index.js'
 import { Attributes } from './attributes.js'
 import { CatalogError, DuplicateIdentifierError } from './errors.js'
@@ -17,6 +18,7 @@ describe('catalog', () => {
   let taxonomy: Taxonomy
   let attributes: Attributes
   let images: Images
+  let pricing: Pricing
 
   beforeAll(async () => {
     fixture = await createTenantFixture(['catalog'], { migrate: true })
@@ -25,6 +27,7 @@ describe('catalog', () => {
     taxonomy = new Taxonomy(db)
     attributes = new Attributes(db)
     images = new Images(db)
+    pricing = new Pricing(db)
   })
 
   afterAll(async () => {
@@ -33,9 +36,10 @@ describe('catalog', () => {
 
   beforeEach(async () => {
     await db.execute(sql`
-      truncate table product_images, variant_attributes, variant_group_restrictions,
-        product_categories, product_texts, product_variants, products,
-        attribute_definitions, categories, brands, catalog_settings, change_events
+      truncate table variant_price_history, variant_prices, pricing_rules, price_lists,
+        customer_groups, pricing_settings, product_images, variant_attributes,
+        variant_group_restrictions, product_categories, product_texts, product_variants,
+        products, attribute_definitions, categories, brands, catalog_settings, change_events
       restart identity cascade
     `)
     await catalog.setLanguages(['uk', 'en'], 'uk')
@@ -296,6 +300,9 @@ describe('catalog', () => {
 
   describe('browsing the catalog', () => {
     async function stock(): Promise<{ inebrya: string; care: string }> {
+      await pricing.createPriceList({ code: 'retail', name: 'Роздріб', isDefault: true })
+      await pricing.createPriceList({ code: 'wholesale', name: 'Опт' })
+
       const inebrya = await taxonomy.createBrand({ name: 'Inebrya' })
       const kaaral = await taxonomy.createBrand({ name: 'Kaaral' })
       const care = await taxonomy.createCategory({ name: 'Догляд' })
@@ -318,6 +325,17 @@ describe('catalog', () => {
         variants: [{ sku: 'MK-500' }],
       })
       await catalog.setStatus(mask.id, 'published')
+
+      await pricing.set({
+        variantId: cream.variants[0]?.id ?? '',
+        priceListCode: 'retail',
+        amountMinor: 49_900,
+      })
+      await pricing.set({
+        variantId: cream.variants[0]?.id ?? '',
+        priceListCode: 'wholesale',
+        amountMinor: 34_900,
+      })
 
       await catalog.create({
         legacyId: '130462',
@@ -346,12 +364,86 @@ describe('catalog', () => {
       })
     })
 
-    it('carries no cost, so a listing cannot leak one', async () => {
+    it('carries no amounts unless they were asked for', async () => {
       await stock()
       const page = await catalog.browse()
 
+      // Not merely hidden downstream: the numbers are not in the answer, so
+      // there is nothing for a screen or a log to leak.
       expect(JSON.stringify(page)).not.toContain('20000')
-      expect(Object.keys(page.rows[0] ?? {})).not.toContain('plannedPurchasePriceMinor')
+      expect(page.rows[0]?.pricesMinor).toEqual({})
+      expect(Object.keys(page.rows[0] ?? {})).not.toContain('purchaseMinor')
+    })
+
+    it('carries the amounts of the lists it was asked for', async () => {
+      await stock()
+
+      const page = await catalog.browse({ priceListCodes: ['retail', 'wholesale'] })
+      const cream = page.rows.find((row) => row.sku === 'CC-250')
+
+      expect(cream?.pricesMinor).toEqual({ retail: 49_900, wholesale: 34_900 })
+      // Asked for two lists, and the third is absent rather than zero: a
+      // product priced for nobody must not read as free.
+      expect(page.rows.find((row) => row.sku === 'SH-1000')?.pricesMinor).toEqual({})
+    })
+
+    it('leaves out a list that was not asked for', async () => {
+      await stock()
+
+      const page = await catalog.browse({ priceListCodes: ['retail'] })
+      expect(page.rows.find((row) => row.sku === 'CC-250')?.pricesMinor).toEqual({
+        retail: 49_900,
+      })
+    })
+
+    it('gives the purchase price only when it is asked for', async () => {
+      await stock()
+
+      const without = await catalog.browse()
+      expect(Object.keys(without.rows[0] ?? {})).not.toContain('purchaseMinor')
+
+      const with_ = await catalog.browse({ withCost: true })
+      expect(with_.rows.find((row) => row.sku === 'CC-250')?.purchaseMinor).toBe(20_000)
+      // Present and null, which says "no purchase price recorded" - a
+      // different thing from "you may not see it".
+      expect(with_.rows.find((row) => row.sku === 'MK-500')?.purchaseMinor).toBeNull()
+    })
+
+    it('returns amounts as numbers, never as strings', async () => {
+      await stock()
+
+      const page = await catalog.browse({ priceListCodes: ['retail'], withCost: true })
+      const cream = page.rows.find((row) => row.sku === 'CC-250')
+
+      expect(typeof cream?.pricesMinor['retail']).toBe('number')
+      expect(typeof cream?.purchaseMinor).toBe('number')
+    })
+
+    it('takes the SKU and the amounts from the same variant', async () => {
+      await pricing.createPriceList({ code: 'retail', name: 'Роздріб', isDefault: true })
+      const product = await catalog.create({
+        legacyId: 'multi',
+        texts: [{ language: 'uk', title: 'Набір' }],
+        variants: [
+          { sku: 'Z-LAST', position: 2, plannedPurchasePriceMinor: 90_000 },
+          { sku: 'A-FIRST', position: 1, plannedPurchasePriceMinor: 10_000 },
+        ],
+      })
+      const first = product.variants.find((variant) => variant.sku === 'A-FIRST')
+      await pricing.set({
+        variantId: first?.id ?? '',
+        priceListCode: 'retail',
+        amountMinor: 11_000,
+      })
+
+      const page = await catalog.browse({ priceListCodes: ['retail'], withCost: true })
+      const row = page.rows.find((entry) => entry.variantCount === 2)
+
+      // The lowest position wins, and one variant supplies both columns: a SKU
+      // beside another variant's price is a row somebody would quote from.
+      expect(row?.sku).toBe('A-FIRST')
+      expect(row?.purchaseMinor).toBe(10_000)
+      expect(row?.pricesMinor).toEqual({ retail: 11_000 })
     })
 
     it('filters by brand, by category and by state', async () => {

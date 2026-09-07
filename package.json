@@ -15,6 +15,7 @@
     "./testing": "./dist/testing/index.js",
     "./runtime": "./dist/tenancy/runtime.js",
     "./catalog": "./dist/catalog/index.js",
+    "./catalog-import": "./dist/catalog-import/index.js",
     "./pricing": "./dist/pricing/index.js"
   },
   "scripts": {

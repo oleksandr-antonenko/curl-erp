@@ -6,6 +6,7 @@
 
 export * from '../auth/schema.js'
 export * from '../catalog/schema.js'
+export * from '../catalog-import/schema.js'
 export * from '../change-feed/schema.js'
 export * from '../channels/schema.js'
 export * from '../pricing/schema.js'

@@ -47,6 +47,7 @@ export class CatalogImport {
   private readonly taxonomy: Taxonomy
   private readonly images: Images
   private readonly retailList: string
+  private readonly brandsByName = new Map<string, string>()
 
   constructor(
     private readonly db: Database,
@@ -386,8 +387,7 @@ export class CatalogImport {
     record: LegacyProduct,
     texts: readonly ProductTextInput[],
   ): Promise<ProductInput> {
-    const brandId =
-      record.brand === undefined ? null : (await this.taxonomy.createBrand({ name: record.brand })).id
+    const brandId = record.brand === undefined ? null : await this.brandIdFor(record.brand)
     const categories = await this.categoryIdsFor(record)
 
     return {
@@ -405,6 +405,29 @@ export class CatalogImport {
         },
       ],
     }
+  }
+
+  /**
+   * The brand, created once however many products carry it.
+   *
+   * Five hundred products share thirty-eight brands, so creating one per
+   * product fails on the second product of each brand and takes that product
+   * down with it - which is what happened the first time this ran against the
+   * real catalog: 385 of 557 products lost to a brand that already existed.
+   */
+  private async brandIdFor(name: string): Promise<string> {
+    const cached = this.brandsByName.get(name)
+    if (cached !== undefined) return cached
+
+    for (const brand of await this.taxonomy.listBrands()) {
+      this.brandsByName.set(brand.name, brand.id)
+    }
+    const known = this.brandsByName.get(name)
+    if (known !== undefined) return known
+
+    const created = await this.taxonomy.createBrand({ name })
+    this.brandsByName.set(name, created.id)
+    return created.id
   }
 
   private async importImages(productId: string, record: LegacyProduct): Promise<void> {
@@ -433,11 +456,16 @@ export class CatalogImport {
     for (const category of ordered) {
       const parentId =
         category.parentLegacyId === null ? null : (created.get(category.parentLegacyId) ?? null)
-      const stored = await this.taxonomy.createCategory({
-        name: category.name,
-        legacyId: category.legacyId,
-        ...(parentId === null ? {} : { parentId }),
-      })
+      // Matched on the previous system's identifier, so a second run updates
+      // the tree it built rather than refusing to build it again.
+      const held = await this.taxonomy.findCategoryByLegacyId(category.legacyId)
+      const stored =
+        held ??
+        (await this.taxonomy.createCategory({
+          name: category.name,
+          legacyId: category.legacyId,
+          ...(parentId === null ? {} : { parentId }),
+        }))
       created.set(category.legacyId, stored.id)
     }
   }

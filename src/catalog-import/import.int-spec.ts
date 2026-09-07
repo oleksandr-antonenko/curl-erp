@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Catalog } from '../catalog/products.js'
+import { Taxonomy } from '../catalog/taxonomy.js'
 import type { Database } from '../db/client.js'
 import { Pricing } from '../pricing/pricing.js'
 import { createTenantFixture, type TenantFixture } from '../testing/index.js'
@@ -478,7 +479,62 @@ describe('importing a catalog off a previous system', () => {
     })
   })
 
+  describe('brands', () => {
+    it('creates one brand however many products carry it', async () => {
+      source.replace([
+        legacyProduct({ legacyId: 'a', brand: 'Inebrya' }),
+        legacyProduct({ legacyId: 'b', brand: 'Inebrya' }),
+        legacyProduct({ legacyId: 'c', brand: 'Inebrya' }),
+        legacyProduct({ legacyId: 'd', brand: 'Kaaral' }),
+      ])
+
+      const report = await importer.apply((await importer.propose()).id)
+
+      // The first run against the real catalog lost 385 of 557 products here:
+      // a brand was created per product, and every product after the first of
+      // its brand failed on the name already being taken.
+      expect(report.imported).toBe(4)
+      expect(report.refusals).toEqual([])
+      const brands = await new Taxonomy(db).listBrands()
+      expect(brands.map((brand) => brand.name).sort()).toEqual(['Inebrya', 'Kaaral'])
+    })
+
+    it('reuses the brand on a second run rather than failing on it', async () => {
+      const products = [
+        legacyProduct({ legacyId: 'a', brand: 'Inebrya' }),
+        legacyProduct({ legacyId: 'b', brand: 'Inebrya' }),
+      ]
+      source.replace(products)
+      await importer.apply((await importer.propose()).id)
+
+      source.replace(products)
+      const second = await new CatalogImport(db, source).apply(
+        (await new CatalogImport(db, source).propose()).id,
+      )
+
+      expect(second.refusals).toEqual([])
+      expect(await new Taxonomy(db).listBrands()).toHaveLength(1)
+    })
+  })
+
   describe('categories', () => {
+    it('rebuilds the same tree on a second run instead of refusing', async () => {
+      source.setCategories([
+        { legacyId: 'c-1', name: 'Догляд', parentLegacyId: null },
+        { legacyId: 'c-2', name: 'Шампуні', parentLegacyId: 'c-1' },
+      ])
+      source.replace([legacyProduct({ legacyId: 'p-1', primaryCategory: 'c-2' })])
+      await importer.apply((await importer.propose()).id)
+
+      source.replace([legacyProduct({ legacyId: 'p-1', primaryCategory: 'c-2' })])
+      const second = await new CatalogImport(db, source).apply(
+        (await new CatalogImport(db, source).propose()).id,
+      )
+
+      expect(second.refusals).toEqual([])
+      expect(await new Taxonomy(db).listCategories()).toHaveLength(2)
+    })
+
     it('rebuilds the tree and places products in it', async () => {
       source.setCategories([
         { legacyId: 'c-2', name: 'Шампуні', parentLegacyId: 'c-1' },

@@ -8,7 +8,10 @@ export { CatalogError, DuplicateIdentifierError, NotFoundError } from './errors.
 export { type AddImageInput, Images, type ProductImage } from './images.js'
 export {
   Catalog,
+  type CatalogBrowseFilter,
   type CatalogLanguages,
+  type CatalogListing,
+  type CatalogPage,
   type Product,
   type ProductInput,
   type ProductText,

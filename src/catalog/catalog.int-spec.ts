@@ -294,6 +294,119 @@ describe('catalog', () => {
     })
   })
 
+  describe('browsing the catalog', () => {
+    async function stock(): Promise<{ inebrya: string; care: string }> {
+      const inebrya = await taxonomy.createBrand({ name: 'Inebrya' })
+      const kaaral = await taxonomy.createBrand({ name: 'Kaaral' })
+      const care = await taxonomy.createCategory({ name: 'Догляд' })
+      const colour = await taxonomy.createCategory({ name: 'Фарбування' })
+
+      const cream = await catalog.create({
+        legacyId: '130460',
+        brandId: inebrya.id,
+        primaryCategoryId: care.id,
+        texts: [{ language: 'uk', title: 'Крем для кучерів' }],
+        variants: [{ sku: 'CC-250', plannedPurchasePriceMinor: 20_000 }],
+      })
+      await catalog.setStatus(cream.id, 'published')
+
+      const mask = await catalog.create({
+        legacyId: '130461',
+        brandId: inebrya.id,
+        primaryCategoryId: colour.id,
+        texts: [{ language: 'uk', title: 'Маска' }],
+        variants: [{ sku: 'MK-500' }],
+      })
+      await catalog.setStatus(mask.id, 'published')
+
+      await catalog.create({
+        legacyId: '130462',
+        brandId: kaaral.id,
+        primaryCategoryId: care.id,
+        texts: [{ language: 'uk', title: 'Шампунь' }],
+        variants: [{ sku: 'SH-1000' }],
+      })
+
+      return { inebrya: inebrya.id, care: care.id }
+    }
+
+    it('lists products with the things a list shows', async () => {
+      await stock()
+
+      const page = await catalog.browse()
+
+      expect(page.total).toBe(3)
+      expect(page.rows.map((row) => row.title)).toEqual(['Крем для кучерів', 'Маска', 'Шампунь'])
+      expect(page.rows[0]).toMatchObject({
+        legacyId: '130460',
+        status: 'published',
+        brandName: 'Inebrya',
+        sku: 'CC-250',
+        variantCount: 1,
+      })
+    })
+
+    it('carries no cost, so a listing cannot leak one', async () => {
+      await stock()
+      const page = await catalog.browse()
+
+      expect(JSON.stringify(page)).not.toContain('20000')
+      expect(Object.keys(page.rows[0] ?? {})).not.toContain('plannedPurchasePriceMinor')
+    })
+
+    it('filters by brand, by category and by state', async () => {
+      const { inebrya, care } = await stock()
+
+      expect((await catalog.browse({ brandId: inebrya })).total).toBe(2)
+      expect((await catalog.browse({ categoryId: care })).total).toBe(2)
+      expect((await catalog.browse({ status: 'draft' })).rows.map((row) => row.title)).toEqual(['Шампунь'])
+      expect((await catalog.browse({ brandId: inebrya, categoryId: care })).total).toBe(1)
+    })
+
+    it('finds a product by title, by SKU and by the old shop number', async () => {
+      await stock()
+
+      expect((await catalog.browse({ search: 'кучер' })).rows[0]?.sku).toBe('CC-250')
+      expect((await catalog.browse({ search: 'MK-500' })).rows[0]?.title).toBe('Маска')
+      expect((await catalog.browse({ search: '130462' })).rows[0]?.title).toBe('Шампунь')
+      expect((await catalog.browse({ search: 'нічого' })).total).toBe(0)
+    })
+
+    it('counts the whole result, not the page', async () => {
+      await stock()
+
+      const page = await catalog.browse({ limit: 2 })
+      expect(page.rows).toHaveLength(2)
+      expect(page.total).toBe(3)
+
+      const second = await catalog.browse({ limit: 2, offset: 2 })
+      expect(second.rows).toHaveLength(1)
+    })
+
+    it('lists a product with no title in this language rather than hiding it', async () => {
+      await catalog.create({
+        legacyId: 'uk-only',
+        texts: [{ language: 'uk', title: 'Тільки українською' }],
+      })
+
+      const english = await catalog.browse({ language: 'en' })
+      expect(english.total).toBe(1)
+      expect(english.rows[0]).toMatchObject({ title: null, legacyId: 'uk-only' })
+    })
+
+    it('counts a product once however many variants it has', async () => {
+      await catalog.create({
+        legacyId: 'multi',
+        texts: [{ language: 'uk', title: 'Набір' }],
+        variants: [{ sku: 'A-1' }, { sku: 'A-2' }, { sku: 'A-3' }],
+      })
+
+      const page = await catalog.browse()
+      expect(page.total).toBe(1)
+      expect(page.rows[0]?.variantCount).toBe(3)
+    })
+  })
+
   describe('who may see a variant', () => {
     it('records the groups a variant is restricted to', async () => {
       const product = await catalog.create({

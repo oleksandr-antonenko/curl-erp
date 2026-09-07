@@ -1,9 +1,10 @@
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import { recordChange } from '../change-feed/record.js'
 import type { Executor } from '../change-feed/types.js'
 import type { Database } from '../db/client.js'
 import { CatalogError, DuplicateIdentifierError, NotFoundError } from './errors.js'
 import {
+  brands,
   catalogSettings,
   type ProductStatus,
   productCategories,
@@ -80,6 +81,36 @@ export interface Product {
   readonly status: ProductStatus
   readonly texts: readonly ProductText[]
   readonly variants: readonly Variant[]
+}
+
+export interface CatalogBrowseFilter {
+  readonly status?: ProductStatus
+  readonly brandId?: string
+  readonly categoryId?: string
+  /** Matches a title, a SKU, a barcode or the previous system's number. */
+  readonly search?: string
+  readonly language?: string
+  readonly limit?: number
+  readonly offset?: number
+}
+
+/** One row of a catalog listing. Deliberately without any cost or price. */
+export interface CatalogListing {
+  readonly id: string
+  readonly legacyId: string | null
+  readonly status: ProductStatus
+  readonly brandId: string | null
+  readonly brandName: string | null
+  readonly title: string | null
+  readonly sku: string
+  readonly variantCount: number
+}
+
+export interface CatalogPage {
+  readonly rows: readonly CatalogListing[]
+  readonly total: number
+  /** The language the titles came back in. */
+  readonly language: string
 }
 
 export interface CatalogLanguages {
@@ -262,6 +293,119 @@ export class Catalog {
       .where(eq(productVariants.id, variantId))
       .limit(1)
     return row?.productId ?? null
+  }
+
+  /**
+   * A page of the catalog, filtered the way someone actually looks for a
+   * product.
+   *
+   * One query rather than a product at a time: five hundred products, each
+   * fetching its own text, variants and categories, is five hundred round
+   * trips for a screen nobody would wait for. The listing carries only what a
+   * list shows; the whole product is a click away.
+   *
+   * Costs are not in it at all. A listing is the easiest place for a purchase
+   * price to leak past a permission check, because nobody thinks of a list as
+   * disclosing anything.
+   */
+  async browse(filter: CatalogBrowseFilter = {}): Promise<CatalogPage> {
+    const language = filter.language ?? (await this.languages()).fallback
+    const where = await this.browseConditions(filter, language)
+
+    const text = this.db
+      .select({
+        productId: productTexts.productId,
+        title: productTexts.title,
+      })
+      .from(productTexts)
+      .where(eq(productTexts.language, language))
+      .as('text')
+
+    const rows = await this.db
+      .select({
+        id: products.id,
+        legacyId: products.legacyId,
+        status: products.status,
+        brandId: products.brandId,
+        brandName: brands.name,
+        title: text.title,
+        sku: sql<string>`min(${productVariants.sku})`,
+        variantCount: sql<number>`count(distinct ${productVariants.id})::int`,
+      })
+      .from(products)
+      .leftJoin(brands, eq(brands.id, products.brandId))
+      .leftJoin(text, eq(text.productId, products.id))
+      .leftJoin(productVariants, eq(productVariants.productId, products.id))
+      .where(where)
+      .groupBy(products.id, products.legacyId, products.status, products.brandId, brands.name, text.title)
+      .orderBy(asc(sql`coalesce(${text.title}, '')`), asc(products.id))
+      .limit(filter.limit ?? 50)
+      .offset(filter.offset ?? 0)
+
+    const [counted] = await this.db
+      .select({ total: sql<number>`count(distinct ${products.id})::int` })
+      .from(products)
+      .leftJoin(text, eq(text.productId, products.id))
+      .leftJoin(productVariants, eq(productVariants.productId, products.id))
+      .where(where)
+
+    return {
+      language,
+      total: counted?.total ?? 0,
+      rows: rows.map((row) => ({
+        id: row.id,
+        legacyId: row.legacyId,
+        status: row.status as ProductStatus,
+        brandId: row.brandId,
+        brandName: row.brandName,
+        title: row.title,
+        sku: row.sku,
+        variantCount: row.variantCount,
+      })),
+    }
+  }
+
+  /** The filters a browse applies, as one condition. */
+  private async browseConditions(filter: CatalogBrowseFilter, language: string): Promise<SQL | undefined> {
+    const conditions: SQL[] = []
+
+    if (filter.status !== undefined) conditions.push(eq(products.status, filter.status))
+    if (filter.brandId !== undefined) conditions.push(eq(products.brandId, filter.brandId))
+
+    if (filter.categoryId !== undefined) {
+      conditions.push(
+        sql`exists (
+          select 1 from ${productCategories}
+          where ${productCategories.productId} = ${products.id}
+            and ${productCategories.categoryId} = ${filter.categoryId}
+        )`,
+      )
+    }
+
+    const search = filter.search?.trim()
+    if (search !== undefined && search !== '') {
+      const pattern = `%${search}%`
+      // Title, SKU and the previous system's number: the three things someone
+      // has in front of them when they are looking for a product.
+      conditions.push(
+        sql`(
+          exists (
+            select 1 from ${productTexts}
+            where ${productTexts.productId} = ${products.id}
+              and ${productTexts.language} = ${language}
+              and ${productTexts.title} ilike ${pattern}
+          )
+          or exists (
+            select 1 from ${productVariants}
+            where ${productVariants.productId} = ${products.id}
+              and (${productVariants.sku} ilike ${pattern} or ${productVariants.barcode} ilike ${pattern})
+          )
+          or ${products.legacyId} ilike ${pattern}
+        )`,
+      )
+    }
+
+    return conditions.length === 0 ? undefined : and(...conditions)
   }
 
   async listByStatus(status: ProductStatus): Promise<Product[]> {

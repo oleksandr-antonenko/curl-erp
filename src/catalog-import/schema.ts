@@ -16,8 +16,17 @@ export const catalogImports = pgTable('catalog_imports', {
   state: text('state').notNull().default('proposed'),
   proposedAt: timestamp('proposed_at', { withTimezone: true }).notNull().defaultNow(),
   proposedBy: text('proposed_by'),
+  /**
+   * The actor's name as it stood at the time.
+   *
+   * Stored beside the id, not looked up later: a report has to name whoever
+   * ran it years afterwards, and by then they may have left and the id would
+   * resolve to nothing. The id stays for linking, the name for reading.
+   */
+  proposedByName: text('proposed_by_name'),
   appliedAt: timestamp('applied_at', { withTimezone: true }),
   appliedBy: text('applied_by'),
+  appliedByName: text('applied_by_name'),
   /** Source record count, and the three states it must reconcile to. */
   sourceRecords: integer('source_records').notNull().default(0),
   imported: integer('imported').notNull().default(0),

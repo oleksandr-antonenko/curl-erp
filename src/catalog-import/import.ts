@@ -91,6 +91,7 @@ export class CatalogImport {
         source: this.reader.sourceName,
         state: 'proposed',
         proposedBy: tryCurrentScope()?.actor?.id ?? null,
+        proposedByName: tryCurrentScope()?.actor?.displayName ?? null,
         sourceRecords: source.length,
         proposal,
       })
@@ -316,6 +317,7 @@ export class CatalogImport {
         state: 'applied',
         appliedAt: new Date(),
         appliedBy: tryCurrentScope()?.actor?.id ?? null,
+        appliedByName: tryCurrentScope()?.actor?.displayName ?? null,
         imported,
         skipped,
         failed,

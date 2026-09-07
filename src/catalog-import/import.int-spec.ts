@@ -4,6 +4,7 @@ import { Catalog } from '../catalog/products.js'
 import { Taxonomy } from '../catalog/taxonomy.js'
 import type { Database } from '../db/client.js'
 import { Pricing } from '../pricing/pricing.js'
+import { bindTenantScope } from '../tenancy/context.js'
 import { createTenantFixture, type TenantFixture } from '../testing/index.js'
 import { ProposalNotApplicableError } from './errors.js'
 import { FakeLegacySource, legacyProduct } from './fake-source.js'
@@ -451,6 +452,31 @@ describe('importing a catalog off a previous system', () => {
         imported: 2,
       })
       expect(history[0]?.appliedAt).toBeInstanceOf(Date)
+    })
+
+    it('names whoever ran it, not just their identifier', async () => {
+      source.replace([legacyProduct({ legacyId: 'a' })])
+
+      await bindTenantScope(
+        {
+          tenant: fixture.tenant('import'),
+          db,
+          actor: { type: 'human', id: 'staff-7', displayName: 'Anna Kovalenko' },
+        },
+        async () => {
+          const runner = new CatalogImport(db, source)
+          await runner.apply((await runner.propose()).id)
+        },
+      )
+
+      // The name is stored, not looked up later: the report has to name them
+      // years afterwards, by which time they may have left.
+      expect((await importer.history())[0]).toMatchObject({
+        proposedBy: 'staff-7',
+        proposedByName: 'Anna Kovalenko',
+        appliedBy: 'staff-7',
+        appliedByName: 'Anna Kovalenko',
+      })
     })
 
     it('keeps each run separate, newest first', async () => {

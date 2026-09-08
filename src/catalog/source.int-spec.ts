@@ -113,35 +113,60 @@ describe('the catalog as a channel reads it', () => {
   })
 
   describe('a professional line', () => {
-    it('is reported as restricted to the groups that have a price for it', async () => {
+    it('is not projected at all to an audience that cannot buy it', async () => {
       const id = await publish({ legacyId: 'pro-1', title: 'Фарба', wholesaleMinor: 34_900 })
 
-      const projected = await source.productFor(id)
-      expect(projected?.restrictedToGroups).toEqual(['professional'])
-      expect(projected?.variants).toHaveLength(0)
+      // Not an empty listing with a note about who it is for: nothing this
+      // audience may buy has no business on this channel's shelves.
+      expect(await source.productFor(id)).toBeNull()
     })
 
-    it('names the audience, not our price list', async () => {
-      await pricing.createPriceList({ code: 'salon-a', name: 'Салон А' })
-      await pricing.defineGroup({ code: 'salon-partner', name: 'Партнери', priceListCode: 'salon-a' })
+    it('is projected, with its price, to the audience it is priced for', async () => {
+      const id = await publish({ legacyId: 'pro-1', title: 'Фарба', wholesaleMinor: 34_900 })
+
+      const wholesale = new CatalogChannelSource(db, {
+        language: 'uk',
+        priceListCode: 'wholesale',
+      })
+      const projected = await wholesale.productFor(id)
+
+      expect(projected?.variants[0]).toMatchObject({ priceMinor: 34_900 })
+    })
+
+    it('carries the restriction when the variant is priced here but limited', async () => {
       const product = await catalog.create({
         legacyId: 'pro-2',
         texts: [{ language: 'uk', title: 'Оксид' }],
+        variants: [{ sku: 'PRO-2', restrictedToGroups: ['professional'] }],
       })
       await pricing.set({
         variantId: product.variants[0]?.id ?? '',
-        priceListCode: 'salon-a',
-        amountMinor: 20_000,
+        priceListCode: 'retail',
+        amountMinor: 49_900,
       })
       await catalog.setStatus(product.id, 'published')
 
       const projected = await source.productFor(product.id)
-      expect(projected?.restrictedToGroups).toEqual(['salon-partner'])
+      expect(projected?.restrictedToGroups).toEqual(['professional'])
+      // Priced for this audience, so the variant travels; the restriction says
+      // who may be shown it.
+      expect(projected?.variants).toHaveLength(1)
     })
 
     it('is kept off a channel that cannot tell customers apart', async () => {
-      const id = await publish({ legacyId: 'pro-1', title: 'Фарба', wholesaleMinor: 34_900 })
-      const projected = await source.productFor(id)
+      const product = await catalog.create({
+        legacyId: 'pro-3',
+        texts: [{ language: 'uk', title: 'Тонер' }],
+        variants: [{ sku: 'PRO-3', restrictedToGroups: ['professional'] }],
+      })
+      await pricing.set({
+        variantId: product.variants[0]?.id ?? '',
+        priceListCode: 'retail',
+        amountMinor: 49_900,
+      })
+      await catalog.setStatus(product.id, 'published')
+
+      const projected = await source.productFor(product.id)
       if (projected === null) throw new Error('expected a projection')
 
       expect(decidePublication(projected, channelThatCannotTellCustomersApart)).toMatchObject({
@@ -162,26 +187,6 @@ describe('the catalog as a channel reads it', () => {
       expect(decidePublication(projected, channelThatCannotTellCustomersApart)).toEqual({
         publish: true,
       })
-    })
-
-    it('carries a restriction stated on the variant itself', async () => {
-      const product = await catalog.create({
-        legacyId: 'pro-3',
-        texts: [{ language: 'uk', title: 'Тонер' }],
-        variants: [{ sku: 'PRO-3', restrictedToGroups: ['professional'] }],
-      })
-      await pricing.set({
-        variantId: product.variants[0]?.id ?? '',
-        priceListCode: 'retail',
-        amountMinor: 49_900,
-      })
-      await catalog.setStatus(product.id, 'published')
-
-      const projected = await source.productFor(product.id)
-      expect(projected?.restrictedToGroups).toEqual(['professional'])
-      // Priced for retail too, so the variant itself still travels - the
-      // restriction decides who is shown it, not whether it exists.
-      expect(projected?.variants).toHaveLength(1)
     })
   })
 

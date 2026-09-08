@@ -65,9 +65,18 @@ export class CatalogChannelSource implements CatalogSource {
       text?.title ?? undefined,
     )
 
-    // Every variant priced elsewhere: the product does not belong on this
-    // channel's shelves for this audience at all.
-    if (variants.length === 0 && restrictions.size === 0) return null
+    // Nothing this audience may buy: the product does not belong on this
+    // channel's shelves at all, restricted or not.
+    //
+    // It used to be published when a restriction was present, on the reasoning
+    // that the channel would enforce the restriction and show it to eligible
+    // customers. Measured against a real platform, that reasoning does not
+    // hold: what arrives is a listing with no variant, no price and nothing to
+    // buy, and the shop then has to hide what we chose to send it. A channel
+    // separates audiences by being a channel - one projection per audience,
+    // each pointed at that audience's price list - not by receiving an empty
+    // shell and a note about who it is for.
+    if (variants.length === 0) return null
 
     const [media, attributes, brand, categories] = await Promise.all([
       this.images.of(product.id),

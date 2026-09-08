@@ -159,9 +159,9 @@ describe('a channel fed by the real catalog', () => {
 
       await carry(sync, adapter)
 
-      const listing = [...adapter.listings.values()][0]
-      expect(listing?.product.variants).toEqual([])
-      expect(listing?.product.restrictedToGroups).toEqual(['professional'])
+      // Nothing at all, not a listing with an empty variant list: the shop
+      // should never have to hide something we chose to send it.
+      expect(adapter.listings.size).toBe(0)
     })
 
     it('appears with its wholesale price to a wholesale audience', async () => {

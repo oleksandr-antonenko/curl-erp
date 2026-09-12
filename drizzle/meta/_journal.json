@@ -78,6 +78,13 @@
       "when": 1788780394489,
       "tag": "0010_import_actor_name",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789242755202,
+      "tag": "0011_supplier_receipts",
+      "breakpoints": true
     }
   ]
 }

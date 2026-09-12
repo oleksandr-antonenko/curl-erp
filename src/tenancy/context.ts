@@ -81,6 +81,26 @@ export function currentActor(): Actor | null {
   return currentScope().actor
 }
 
+/**
+ * The actor, insisting there is one.
+ *
+ * Core rule: every document records who produced it. A document written with
+ * no actor is a document nobody can be asked about, so the modules that write
+ * them use this rather than tolerating null.
+ */
+export function requireActor(what: string): Actor {
+  const actor = currentScope().actor
+  if (actor === null) throw new MissingActorError(what)
+  return actor
+}
+
+export class MissingActorError extends Error {
+  override readonly name = 'MissingActorError'
+  constructor(readonly what: string) {
+    super(`${what} cannot be recorded without an actor`)
+  }
+}
+
 /** Runs `fn` with a different actor in the same tenant. */
 export function withActor<T>(actor: Actor | null, fn: () => Promise<T>): Promise<T> {
   return runInTenantScope({ ...currentScope(), actor }, fn)

@@ -16,7 +16,11 @@
     "./runtime": "./dist/tenancy/runtime.js",
     "./catalog": "./dist/catalog/index.js",
     "./catalog-import": "./dist/catalog-import/index.js",
-    "./pricing": "./dist/pricing/index.js"
+    "./pricing": "./dist/pricing/index.js",
+    "./supplier-receipts": "./dist/supplier-receipts/index.js",
+    "./documents": "./dist/documents/index.js",
+    "./stock": "./dist/stock/index.js",
+    "./contractors": "./dist/contractors/index.js"
   },
   "scripts": {
     "build": "tsc --build",

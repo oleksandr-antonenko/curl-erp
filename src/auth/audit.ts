@@ -15,6 +15,10 @@ export const SECURITY_EVENT_KINDS = [
   'invitation.created',
   'invitation.accepted',
   'invitation.revoked',
+  /* A burst of invitations from one account, refused. Worth a record whether
+   * or not it got through: the interesting case is the account that keeps
+   * trying. */
+  'invitation.throttled',
   'role.created',
   'role.updated',
   'role.deleted',

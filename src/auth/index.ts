@@ -14,6 +14,7 @@ export {
   type StaffMember,
 } from './directory.js'
 export {
+  DuplicateInvitationError,
   type Invitation,
   InvitationError,
   type IssuedInvitation,

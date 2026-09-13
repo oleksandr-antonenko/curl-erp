@@ -1,11 +1,27 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { and, asc, desc, eq, isNull } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gte, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { StaffDirectory, type StaffMember } from './directory.js'
 import { staffInvitations } from './schema.js'
 
 export class InvitationError extends Error {
   override readonly name = 'InvitationError'
+}
+
+/**
+ * This address already has an invitation that can still be used.
+ *
+ * Issuing a second one is not harmless duplication: it puts two working tokens
+ * into the world for one person, and then revoking "the invitation" revokes
+ * one of them while the other still opens the door.
+ */
+export class DuplicateInvitationError extends InvitationError {
+  constructor(
+    readonly email: string,
+    readonly existing: Invitation,
+  ) {
+    super(`${email} already has an invitation that is still valid`)
+  }
 }
 
 export interface Invitation {
@@ -53,18 +69,31 @@ export class StaffInvitations {
     return this.options.now ?? ((): Date => new Date())
   }
 
+  /**
+   * Issues one invitation for an address, and refuses a second.
+   *
+   * The refusal is part of what an invitation is, not a policy of any one
+   * application: a live invitation is a key to the building, and handing out
+   * two keys while calling it one makes revocation a lie. A caller that means
+   * to replace an invitation revokes the old one first, which is a decision
+   * somebody makes rather than a side effect of pressing a button twice.
+   */
   async invite(input: {
     email: string
     roles: readonly string[]
     invitedBy?: string
   }): Promise<IssuedInvitation> {
+    const email = input.email.toLowerCase()
+    const live = await this.liveFor(email)
+    if (live !== null) throw new DuplicateInvitationError(email, live)
+
     const token = randomBytes(32).toString('base64url')
     const expiresAt = new Date(this.clock().getTime() + (this.options.ttlMs ?? DEFAULT_TTL_MS))
 
     const [row] = await this.db
       .insert(staffInvitations)
       .values({
-        email: input.email.toLowerCase(),
+        email,
         tokenHash: hashToken(token),
         roles: [...input.roles],
         invitedBy: input.invitedBy ?? null,
@@ -74,6 +103,58 @@ export class StaffInvitations {
 
     if (row === undefined) throw new InvitationError('Failed to create invitation')
     return { invitation: toInvitation(row), token }
+  }
+
+  /**
+   * The invitation this address can still use, if any.
+   *
+   * "Still usable" is the same three conditions the token check applies:
+   * not accepted, not revoked, not expired. An expired invitation is not in
+   * the way of a new one.
+   */
+  async liveFor(email: string): Promise<Invitation | null> {
+    const [row] = await this.db
+      .select()
+      .from(staffInvitations)
+      .where(
+        and(
+          eq(staffInvitations.email, email.toLowerCase()),
+          isNull(staffInvitations.acceptedAt),
+          isNull(staffInvitations.revokedAt),
+          gte(staffInvitations.expiresAt, this.clock()),
+        ),
+      )
+      .orderBy(desc(staffInvitations.createdAt))
+      .limit(1)
+    return row === undefined ? null : toInvitation(row)
+  }
+
+  /**
+   * How many invitations were issued since a moment, by whom or to whom.
+   *
+   * A fact, with no policy in it: how many is too many, and over what window,
+   * is a decision each deployment makes, so the numbers live with the caller.
+   * Counted from the table rather than from memory, so it survives a restart
+   * and holds across however many processes serve the admin.
+   */
+  async countIssuedSince(input: {
+    readonly since: Date
+    readonly invitedBy?: string
+    readonly email?: string
+  }): Promise<number> {
+    const conditions = [gte(staffInvitations.createdAt, input.since)]
+    if (input.invitedBy !== undefined) {
+      conditions.push(eq(staffInvitations.invitedBy, input.invitedBy))
+    }
+    if (input.email !== undefined) {
+      conditions.push(eq(staffInvitations.email, input.email.toLowerCase()))
+    }
+
+    const [row] = await this.db
+      .select({ issued: count() })
+      .from(staffInvitations)
+      .where(and(...conditions))
+    return row?.issued ?? 0
   }
 
   /** The invitation a token refers to, if it can still be used. */

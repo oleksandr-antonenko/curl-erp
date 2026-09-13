@@ -5,7 +5,7 @@ import type { Database } from '../db/client.js'
 import { createTenantFixture, type TenantFixture } from '../testing/index.js'
 import { AuditTamperError, SecurityAudit } from './audit.js'
 import { RoleError, StaffDirectory } from './directory.js'
-import { InvitationError, StaffInvitations } from './invitations.js'
+import { DuplicateInvitationError, InvitationError, StaffInvitations } from './invitations.js'
 import { AuthorizationError, authorize, can } from './principal.js'
 import {
   authUsers,
@@ -271,6 +271,57 @@ describe('staff access', () => {
       const rows = await db.select().from(staffInvitations)
       expect(JSON.stringify(rows)).not.toContain(token)
     })
+  })
+
+  it('refuses a second invitation while the first one still opens the door', async () => {
+    const invitations = new StaffInvitations(db)
+    const first = await invitations.invite({ email: 'Dvoye@example.com', roles: ['viewer'] })
+
+    // Pressing the button twice must not put two working keys into the world.
+    await expect(invitations.invite({ email: 'dvoye@example.com', roles: ['viewer'] })).rejects.toThrow(
+      DuplicateInvitationError,
+    )
+
+    // The first one still works, untouched.
+    expect(await invitations.find(first.token)).not.toBeNull()
+  })
+
+  it('lets a new invitation be issued once the old one is out of the way', async () => {
+    const invitations = new StaffInvitations(db)
+    const first = await invitations.invite({ email: 'again@example.com', roles: ['viewer'] })
+
+    await invitations.revoke(first.invitation.id)
+    const second = await invitations.invite({ email: 'again@example.com', roles: ['viewer'] })
+    expect(second.invitation.id).not.toBe(first.invitation.id)
+
+    // And the revoked one stays dead.
+    const revoked = await invitations.find(first.token)
+    expect(revoked?.revokedAt).not.toBeNull()
+  })
+
+  it('does not let an expired invitation block a new one', async () => {
+    let now = new Date('2026-01-01T00:00:00Z')
+    const invitations = new StaffInvitations(db, { ttlMs: 1000, now: () => now })
+    await invitations.invite({ email: 'stale@example.com', roles: ['viewer'] })
+
+    now = new Date(now.getTime() + 60_000)
+    await expect(invitations.invite({ email: 'stale@example.com', roles: ['viewer'] })).resolves.toBeDefined()
+  })
+
+  it('counts what was issued, by whom and to whom, for a caller that sets a limit', async () => {
+    const invitations = new StaffInvitations(db)
+    const inviter = await createAccount('inviter@example.com')
+    const since = new Date(Date.now() - 60_000)
+
+    await invitations.invite({ email: 'one@example.com', roles: ['viewer'], invitedBy: inviter })
+    await invitations.invite({ email: 'two@example.com', roles: ['viewer'], invitedBy: inviter })
+    await invitations.invite({ email: 'three@example.com', roles: ['viewer'] })
+
+    expect(await invitations.countIssuedSince({ since, invitedBy: inviter })).toBe(2)
+    expect(await invitations.countIssuedSince({ since, email: 'ONE@example.com' })).toBe(1)
+    expect(await invitations.countIssuedSince({ since })).toBe(3)
+    // Nothing before the window is counted.
+    expect(await invitations.countIssuedSince({ since: new Date(Date.now() + 60_000) })).toBe(0)
   })
 
   describe('service accounts', () => {

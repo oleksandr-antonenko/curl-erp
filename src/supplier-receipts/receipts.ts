@@ -4,6 +4,7 @@ import { recordChange } from '../change-feed/record.js'
 import type { Executor } from '../change-feed/types.js'
 import { Contractors } from '../contractors/contractors.js'
 import type { Database } from '../db/client.js'
+import { LegalEntities, type LegalEntityReference } from '../legal-entities/legal-entities.js'
 import { Stock } from '../stock/stock.js'
 import { requireActor } from '../tenancy/context.js'
 import { type MatchableVariant, type MatchCandidate, proposeMatches } from './matching.js'
@@ -201,6 +202,9 @@ export class SupplierReceipts {
       throw new ReceiptError('A stated total must be integer minor units, not negative')
     }
     await this.contractors.require(input.supplierId, 'supplier')
+    // Numbering is per entity, so an entity nobody registered would make the
+    // number mean nothing. A deactivated one takes no new documents.
+    await new LegalEntities(this.db).requireActive(input.legalEntityId)
 
     const lines = resolveLineAmounts(input)
     // Lines may be filled in later, but whatever is given now must add up: a
@@ -518,4 +522,16 @@ function toReceipt(
         })),
     })),
   }
+}
+
+/** Lets the legal entity registry refuse to delete an entity receipts use. */
+export const supplierReceiptsReferenceEntities: LegalEntityReference = {
+  async heldBy(db, legalEntityId) {
+    const [row] = await db
+      .select({ id: supplierReceipts.id, number: supplierReceipts.number })
+      .from(supplierReceipts)
+      .where(eq(supplierReceipts.legalEntityId, legalEntityId))
+      .limit(1)
+    return row === undefined ? null : `supplier receipt ${row.number ?? row.id}`
+  },
 }

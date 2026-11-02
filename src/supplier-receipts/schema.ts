@@ -12,6 +12,7 @@ import {
 import { productVariants } from '../catalog/schema.js'
 import { contractors } from '../contractors/schema.js'
 import { documents } from '../documents/schema.js'
+import { legalEntities } from '../legal-entities/schema.js'
 import { warehouses } from '../stock/schema.js'
 
 /*
@@ -38,7 +39,9 @@ export const supplierReceipts = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     /* Numbering is per legal entity: two entities may each hold a document
      * numbered 8872, and a global unique index would reject the second. */
-    legalEntityId: uuid('legal_entity_id').notNull(),
+    legalEntityId: uuid('legal_entity_id')
+      .notNull()
+      .references(() => legalEntities.id, { onDelete: 'restrict' }),
     number: text('number'),
     supplierId: uuid('supplier_id')
       .notNull()

@@ -24,6 +24,7 @@ export {
   type ReceiptLinePart,
   ReceiptNotFoundError,
   SupplierReceipts,
+  supplierReceiptsReferenceEntities,
   UnevidencedError,
   UnresolvedLinesError,
 } from './receipts.js'

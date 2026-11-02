@@ -4,6 +4,12 @@ import { Catalog } from '../catalog/products.js'
 import { changeEvents } from '../change-feed/schema.js'
 import { Contractors } from '../contractors/contractors.js'
 import type { Database } from '../db/client.js'
+import {
+  LegalEntities,
+  LegalEntityInactiveError,
+  LegalEntityInUseError,
+  LegalEntityNotFoundError,
+} from '../legal-entities/legal-entities.js'
 import { Stock } from '../stock/stock.js'
 import { runInTenantScope } from '../tenancy/context.js'
 import { createTenantFixture, type TenantFixture } from '../testing/index.js'
@@ -12,6 +18,7 @@ import {
   AlreadyPostedError,
   ReceiptError,
   SupplierReceipts,
+  supplierReceiptsReferenceEntities,
   UnevidencedError,
   UnresolvedLinesError,
 } from './receipts.js'
@@ -19,6 +26,7 @@ import type { InvoiceRecogniser, RecognisedInvoice } from './recognition.js'
 import { RecognitionUnavailableError } from './recognition.js'
 
 const ENTITY = '00000000-0000-4000-8000-000000000001'
+const OTHER_ENTITY = '00000000-0000-4000-8000-000000000002'
 
 describe('supplier receipts', () => {
   let fixture: TenantFixture
@@ -41,7 +49,12 @@ describe('supplier receipts', () => {
     await db.execute(sql`
       truncate table supplier_receipt_line_parts, supplier_receipt_lines, supplier_receipts,
         stock_lots, warehouses, contractors, documents, change_events,
-        product_variants, products restart identity cascade
+        product_variants, products, legal_entities restart identity cascade
+    `)
+    await db.execute(sql`
+      insert into legal_entities (id, name, registry_code, actor_type, actor_id) values
+        (${ENTITY}, 'ФОП Перша', '1111111111', 'human', 'staff-1'),
+        (${OTHER_ENTITY}, 'ФОП Друга', '2222222222', 'human', 'staff-1')
     `)
   })
 
@@ -499,7 +512,7 @@ describe('supplier receipts', () => {
 
   it('numbers documents per legal entity, not globally', async () => {
     const { supplierId, warehouseId } = await given()
-    const other = '00000000-0000-4000-8000-000000000002'
+    const other = OTHER_ENTITY
 
     await scoped(async () => {
       const receipts = new SupplierReceipts(db)
@@ -515,6 +528,28 @@ describe('supplier receipts', () => {
 
       // The same number under one entity is the clash that must be refused.
       await expect(receipts.create({ ...common, legalEntityId: ENTITY })).rejects.toThrow()
+    })
+  })
+
+  it('refuses a receipt for an entity the tenant never registered, or retired', async () => {
+    const { supplierId, warehouseId } = await given()
+    await scoped(async () => {
+      const receipts = new SupplierReceipts(db)
+      const common = { supplierId, warehouseId, statedTotalMinor: 0, sourceNote: 'Накладна' }
+      await expect(
+        receipts.create({ ...common, legalEntityId: '00000000-0000-4000-8000-0000000000ff' }),
+      ).rejects.toThrow(LegalEntityNotFoundError)
+
+      await new LegalEntities(db).deactivate(OTHER_ENTITY)
+      await expect(receipts.create({ ...common, legalEntityId: OTHER_ENTITY })).rejects.toThrow(
+        LegalEntityInactiveError,
+      )
+
+      // And an entity a receipt uses cannot be deleted.
+      await receipts.create({ ...common, legalEntityId: ENTITY })
+      await expect(new LegalEntities(db, [supplierReceiptsReferenceEntities]).remove(ENTITY)).rejects.toThrow(
+        LegalEntityInUseError,
+      )
     })
   })
 

@@ -127,6 +127,13 @@
       "when": 1793624567845,
       "tag": "0017_customer_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793624678760,
+      "tag": "0018_receipt_entity_fk",
+      "breakpoints": true
     }
   ]
 }

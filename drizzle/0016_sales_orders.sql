@@ -14,6 +14,7 @@ CREATE TABLE "payments" (
 --> statement-breakpoint
 CREATE TABLE "sales_order_events" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"sequence" bigserial NOT NULL,
 	"order_id" uuid NOT NULL,
 	"kind" text NOT NULL,
 	"from_value" text,

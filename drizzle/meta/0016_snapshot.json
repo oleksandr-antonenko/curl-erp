@@ -1,5 +1,5 @@
 {
-  "id": "0e2fb83c-5a96-4bfd-954a-8865641294f1",
+  "id": "7df1a940-2a95-4d72-b3ea-5a1097883a63",
   "prevId": "6668572e-7186-4f94-86bd-c153204c9e65",
   "version": "7",
   "dialect": "postgresql",
@@ -4925,6 +4925,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "bigserial",
+          "primaryKey": false,
+          "notNull": true
         },
         "order_id": {
           "name": "order_id",

@@ -339,6 +339,56 @@ describe('sales orders', () => {
       ).rejects.toThrow(PersonRequiredError)
     })
 
+    it('binds the source of a payment to whoever records it', async () => {
+      const { sales, id } = await confirmed('o-1', () => kuzmenko)
+      const payment = {
+        orderId: id,
+        amountMinor: 138_800,
+        currency: 'UAH',
+        paidAt: new Date(),
+        reference: 'r-1',
+      }
+      // A bot cannot claim a provider said so.
+      await expect(
+        as({ type: 'bot', id: 'assistant' }, () =>
+          sales.recordPayment({ ...payment, source: 'card_provider' }),
+        ),
+      ).rejects.toThrow(PersonRequiredError)
+      // An integration speaks only for itself.
+      await expect(
+        as({ type: 'integration', id: 'bank_statement' }, () =>
+          sales.recordPayment({ ...payment, source: 'card_provider' }),
+        ),
+      ).rejects.toThrow(/own source/)
+      await expect(
+        as({ type: 'integration', id: 'card_provider' }, () =>
+          sales.recordPayment({ ...payment, source: 'manual' }),
+        ),
+      ).rejects.toThrow(/own source/)
+      // A person records by hand, and only by hand.
+      await expect(
+        person(() => sales.recordPayment({ ...payment, source: 'card_provider' })),
+      ).rejects.toThrow(/manual/)
+      expect((await sales.require(id)).payments).toHaveLength(0)
+    })
+
+    it('ships only by a person', async () => {
+      const { sales, id } = await confirmed('o-1', () => kuzmenko)
+      await person(() =>
+        sales.recordPayment({
+          orderId: id,
+          amountMinor: 138_800,
+          currency: 'UAH',
+          paidAt: new Date(),
+          source: 'manual',
+          reference: 'f',
+        }),
+      )
+      await expect(
+        as({ type: 'integration', id: 'shop' }, () => sales.ship(id, '20450000000000')),
+      ).rejects.toThrow(PersonRequiredError)
+    })
+
     it('accepts card money before confirmation, then holds the person to that entity', async () => {
       const sales = await arrive(order('o-1', { paymentMethod: 'card_link' }))
       const created = await only(sales, 'o-1')

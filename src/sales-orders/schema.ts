@@ -1,5 +1,6 @@
 import {
   bigint,
+  bigserial,
   index,
   integer,
   jsonb,
@@ -112,6 +113,8 @@ export const salesOrderEvents = pgTable(
   'sales_order_events',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /** Order of events, including several written in one transaction. */
+    sequence: bigserial('sequence', { mode: 'number' }).notNull(),
     orderId: uuid('order_id')
       .notNull()
       .references(() => salesOrders.id, { onDelete: 'restrict' }),

@@ -424,10 +424,7 @@ export class SalesOrders {
    * it is confirmed, because an order nobody has looked at is not yet ours.
    */
   async recordPayment(input: PaymentInput): Promise<PaymentResult> {
-    const actor = requireActor('A payment')
-    if (input.source === 'manual' && actor.type !== 'human') {
-      throw new PersonRequiredError('Recording a payment by hand', actor)
-    }
+    const actor = authorisePaymentSource(input.source)
     if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
       throw new SalesOrderError('A payment must be a positive whole number of minor units')
     }
@@ -502,7 +499,7 @@ export class SalesOrders {
 
   /** A person marks a paid order shipped, with the carrier's tracking number. */
   async ship(orderId: string, trackingReference: string): Promise<SalesOrder> {
-    const actor = requireActor('Shipping an order')
+    const actor = requirePerson('Shipping an order')
     const tracking = trackingReference.trim()
     if (tracking === '') throw new SalesOrderError('A shipment needs a tracking reference')
     await this.db.transaction(async (tx) => {
@@ -548,7 +545,7 @@ export class SalesOrders {
       .select()
       .from(salesOrderEvents)
       .where(eq(salesOrderEvents.orderId, orderId))
-      .orderBy(asc(salesOrderEvents.occurredAt), asc(salesOrderEvents.id))
+      .orderBy(asc(salesOrderEvents.sequence))
   }
 
   /** What is waiting for staff, oldest first. Every figure is computed here. */
@@ -690,6 +687,33 @@ export const salesOrdersReferenceEntities: LegalEntityReference = {
 
 export function assertTransition(from: SalesOrderStatus, to: SalesOrderStatus): void {
   if (!TRANSITIONS[from].includes(to)) throw new TransitionRefusedError(from, to)
+}
+
+/**
+ * Who may say money arrived, and through which source.
+ *
+ * The source is part of the fact, so it is bound to whoever states it rather
+ * than taken from the request: a person records only `manual` payments, an
+ * integration only payments under its own name, and a bot none at all - a bot
+ * claiming "the provider says it is paid" would otherwise mark any order paid.
+ */
+function authorisePaymentSource(source: string): Actor {
+  const actor = requireActor('A payment')
+  if (actor.type === 'human') {
+    if (source !== 'manual') {
+      throw new SalesOrderError(`A person records payments as "manual", not as "${source}"`)
+    }
+    return actor
+  }
+  if (actor.type === 'integration') {
+    if (source === 'manual' || source !== actor.id) {
+      throw new SalesOrderError(
+        `Integration ${actor.id} may only record payments from its own source, not "${source}"`,
+      )
+    }
+    return actor
+  }
+  throw new PersonRequiredError('Recording a payment', actor)
 }
 
 function requirePerson(what: string): Actor {

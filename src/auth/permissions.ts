@@ -39,6 +39,22 @@ export const PERMISSIONS = [
   'ledger.read',
   'ledger.post',
 
+  // Customers. `customer.read_contact` gates emails, phones and addresses.
+  'customer.read',
+  'customer.read_contact',
+  'customer.write',
+  'customer.invite',
+
+  // Customer orders. Confirming an order's legal entity, recording money and
+  // shipping are separate decisions and separately granted.
+  'order.read',
+  'order.confirm',
+  'order.ship',
+  'payment.record',
+
+  // Legal entities and their bank details
+  'legal_entity.manage',
+
   // Documents
   'document.read',
   'document.write',
@@ -69,6 +85,14 @@ export const SYSTEM_ROLES = {
     'price.write',
     'inventory.read',
     'ledger.read',
+    'customer.read',
+    'customer.read_contact',
+    'customer.write',
+    'customer.invite',
+    'order.read',
+    'order.confirm',
+    'order.ship',
+    'payment.record',
     'document.read',
     'document.write',
     'document.confirm',
@@ -78,6 +102,8 @@ export const SYSTEM_ROLES = {
   ],
   warehouse: [
     'catalog.read',
+    'order.read',
+    'order.ship',
     'inventory.read',
     'inventory.write',
     'document.read',
@@ -92,12 +118,15 @@ export const SYSTEM_ROLES = {
     'cost.read',
     'ledger.read',
     'ledger.post',
+    'customer.read',
+    'order.read',
+    'payment.record',
     'document.read',
     'report.read',
     'report.export',
     'audit.read',
   ],
-  viewer: ['catalog.read', 'inventory.read', 'document.read', 'report.read'],
+  viewer: ['catalog.read', 'inventory.read', 'order.read', 'document.read', 'report.read'],
 } as const satisfies Record<string, readonly Permission[]>
 
 export type SystemRole = keyof typeof SYSTEM_ROLES
@@ -116,4 +145,8 @@ export function isSystemRole(value: string): value is SystemRole {
  * Permissions that must never reach an actor without an explicit grant, even
  * as a field in a larger response.
  */
-export const SENSITIVE_PERMISSIONS: readonly Permission[] = ['cost.read', 'ledger.read']
+export const SENSITIVE_PERMISSIONS: readonly Permission[] = [
+  'cost.read',
+  'ledger.read',
+  'customer.read_contact',
+]

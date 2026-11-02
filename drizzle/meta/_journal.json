@@ -120,6 +120,13 @@
       "when": 1793624449178,
       "tag": "0016_sales_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793624567845,
+      "tag": "0017_customer_imports",
+      "breakpoints": true
     }
   ]
 }

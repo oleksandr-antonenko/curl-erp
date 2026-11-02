@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeFeedReader } from '../change-feed/feed.js'
 import { recordChange } from '../change-feed/record.js'
 import { changeEvents } from '../change-feed/schema.js'
+import { contractors as counterparties } from '../contractors/schema.js'
 import type { Database } from '../db/client.js'
 import { createTenantFixture, InMemoryStock, type TenantFixture } from '../testing/index.js'
 import type { ChannelOrder, ChannelProductInput } from './contract.js'
@@ -22,7 +23,6 @@ import {
   channelPayments,
   channelPublications,
   channelState,
-  counterparties,
   counterpartyIdentities,
 } from './schema.js'
 import { ChannelStock } from './stock.js'
@@ -365,12 +365,16 @@ describe('sales channels', () => {
       await new ChannelOrders(db).receive(CHANNEL, [orderFor('o-5', 'ext-var-1')])
 
       const events = await new ChangeFeedReader(db).read(0)
-      expect(events).toHaveLength(1)
-      expect(events[0]).toMatchObject({
-        entityType: 'channel_order',
+      const arrivals = events.filter((event) => event.entityType === 'channel_order')
+      expect(arrivals).toHaveLength(1)
+      expect(arrivals[0]).toMatchObject({
         entityId: `${CHANNEL}:o-5`,
         actor: { type: 'integration', id: CHANNEL },
       })
+      // The new customer is announced too, without any of their contact details.
+      const customer = events.find((event) => event.entityType === 'contractor')
+      expect(customer).toMatchObject({ kind: 'created', actor: { type: 'integration', id: CHANNEL } })
+      expect(JSON.stringify(customer)).not.toMatch(/@|\d{7,}/)
     })
 
     it('fetches only what is new since last time', async () => {
@@ -432,6 +436,21 @@ describe('sales channels', () => {
         phone: '380441234567',
       })
       expect(again.id).toBe(first.id)
+    })
+
+    it('does not merge two people who share a phone but not an email', async () => {
+      const customers = new ChannelCustomers(db)
+      const olga = await customers.resolve(CHANNEL, {
+        externalId: 'c-6',
+        email: 'olga@salon.ua',
+        phone: '+38 (067) 123-45-67',
+      })
+      const iryna = await customers.resolve(CHANNEL, {
+        externalId: 'c-7',
+        email: 'iryna@salon.ua',
+        phone: '380671234567',
+      })
+      expect(iryna.id).not.toBe(olga.id)
     })
 
     it('creates someone new when nothing matches', async () => {

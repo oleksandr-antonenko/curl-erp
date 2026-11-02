@@ -92,6 +92,20 @@
       "when": 1793623821526,
       "tag": "0012_legal_entities",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793623895554,
+      "tag": "0013_contractor_customers",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793623924464,
+      "tag": "0014_fold_counterparties",
+      "breakpoints": true
     }
   ]
 }

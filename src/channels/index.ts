@@ -77,7 +77,6 @@ export {
   type ChannelOutboundRow,
   type ChannelPaymentRow,
   type ChannelPublicationRow,
-  type CounterpartyRow,
   channelDrift,
   channelInboxOrders,
   channelMappings,
@@ -85,7 +84,6 @@ export {
   channelPayments,
   channelPublications,
   channelState,
-  counterparties,
   counterpartyIdentities,
 } from './schema.js'
 export {

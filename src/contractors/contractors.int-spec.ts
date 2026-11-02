@@ -115,4 +115,19 @@ describe('contractors', () => {
       /at least one role/,
     )
   })
+
+  it('announces a changed phone without the phone number', async () => {
+    const contractors = new Contractors(db)
+    const olga = await scoped(() => contractors.create({ name: 'Ольга', roles: ['customer'] }))
+    await db.execute(sql`truncate table change_events restart identity`)
+
+    const updated = await scoped(() => contractors.updateContact(olga.id, { phone: '+38 (067) 123-45-67' }))
+    expect(updated.phone).toBe('380671234567')
+
+    const events = await db.execute<{ changed_fields: string[] }>(
+      sql`select changed_fields from change_events where entity_id = ${olga.id}`,
+    )
+    expect(events.rows).toEqual([{ changed_fields: ['phone'] }])
+    expect(JSON.stringify(events.rows)).not.toContain('1234567')
+  })
 })

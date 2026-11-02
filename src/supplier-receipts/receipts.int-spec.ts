@@ -474,14 +474,21 @@ describe('supplier receipts', () => {
     // payment for a delivery is a separate event that is often already
     // recorded; a second record of it is the double count this design exists
     // to prevent.
+    // Money tables may exist (payments arrive with sales orders); posting a
+    // receipt must leave every one of them empty. Configuration that merely
+    // has "payment" in its name is not money.
     const moneyTables = await db.execute<{ table_name: string }>(sql`
       select table_name from information_schema.tables
       where table_schema = 'public'
         and (table_name like '%payment%' or table_name like '%expense%'
              or table_name like '%ledger%')
         and table_name not like 'channel%'
+        and table_name <> 'legal_entity_payment_defaults'
     `)
-    expect(moneyTables.rows).toHaveLength(0)
+    for (const { table_name } of moneyTables.rows) {
+      const rows = await db.execute(sql`select 1 from ${sql.identifier(table_name)} limit 1`)
+      expect(rows.rows, `${table_name} must stay empty`).toHaveLength(0)
+    }
 
     // And the receipt exposes no way to write one.
     const surface = Object.getOwnPropertyNames(SupplierReceipts.prototype)

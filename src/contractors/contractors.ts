@@ -1,4 +1,5 @@
 import { and, eq, or, sql } from 'drizzle-orm'
+import { recordChange } from '../change-feed/record.js'
 import type { Database } from '../db/client.js'
 import { requireActor } from '../tenancy/context.js'
 import { CONTRACTOR_ROLES, type ContractorRole, type ContractorRow, contractors } from './schema.js'
@@ -61,6 +62,17 @@ export interface Contractor {
   readonly roles: readonly ContractorRole[]
   readonly isActive: boolean
   readonly note: string | null
+  readonly email: string | null
+  readonly phone: string | null
+  readonly customerGroup: string | null
+}
+
+/** How to reach a customer, and which prices they are quoted. */
+export interface ContractorContactPatch {
+  readonly name?: string
+  readonly email?: string | null
+  readonly phone?: string | null
+  readonly customerGroup?: string | null
 }
 
 /** Anything that can say whether a contractor still appears in history. */
@@ -145,6 +157,46 @@ export class Contractors {
     return rows.map(toContractor)
   }
 
+  /**
+   * Changes a customer's name, contact details or group.
+   *
+   * The change feed is told which fields changed and never their values:
+   * marketplaces and the search index read that feed, and a phone number or an
+   * email address must not reach either.
+   */
+  async updateContact(id: string, patch: ContractorContactPatch): Promise<Contractor> {
+    return await this.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(contractors).where(eq(contractors.id, id)).for('update')
+      if (current === undefined) throw new ContractorNotFoundError(id)
+
+      const next = {
+        name: patch.name === undefined ? current.name : patch.name.trim(),
+        email: patch.email === undefined ? current.email : normaliseEmail(patch.email),
+        phone: patch.phone === undefined ? current.phone : normalisePhone(patch.phone),
+        customerGroup: patch.customerGroup === undefined ? current.customerGroup : patch.customerGroup,
+      }
+      if (next.name === '') throw new ContractorError('A contractor needs a name')
+      const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
+        (field) => next[field] !== current[field],
+      )
+      if (changed.length === 0) return toContractor(current)
+
+      const [row] = await tx
+        .update(contractors)
+        .set({ ...next, updatedAt: new Date() })
+        .where(eq(contractors.id, id))
+        .returning()
+      if (row === undefined) throw new ContractorNotFoundError(id)
+      await recordChange(tx, {
+        entityType: 'contractor',
+        entityId: id,
+        kind: 'updated',
+        changedFields: changed,
+      })
+      return toContractor(row)
+    })
+  }
+
   async deactivate(id: string): Promise<Contractor> {
     const [row] = await this.db
       .update(contractors)
@@ -198,6 +250,18 @@ export class Contractors {
   }
 }
 
+/** Lower case, so `Olga@Salon.UA` and `olga@salon.ua` are one address. */
+export function normaliseEmail(email: string | null | undefined): string | null {
+  const trimmed = email?.trim().toLowerCase()
+  return trimmed === undefined || trimmed === '' ? null : trimmed
+}
+
+/** Digits only, so `+38 (067) 123-45-67` and `380671234567` are one number. */
+export function normalisePhone(phone: string | null | undefined): string | null {
+  const digits = phone?.replace(/\D/g, '') ?? ''
+  return digits === '' ? null : digits
+}
+
 function blankToNull(value: string | undefined): string | null {
   const trimmed = value?.trim()
   return trimmed === undefined || trimmed === '' ? null : trimmed
@@ -212,5 +276,8 @@ function toContractor(row: ContractorRow): Contractor {
     roles: row.roles as ContractorRole[],
     isActive: row.isActive,
     note: row.note,
+    email: row.email,
+    phone: row.phone,
+    customerGroup: row.customerGroup,
   }
 }

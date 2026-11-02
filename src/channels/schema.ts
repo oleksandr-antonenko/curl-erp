@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
+import { contractors } from '../contractors/schema.js'
 
 /**
  * What a thing is called on the other side.
@@ -83,7 +84,8 @@ export const channelInboxOrders = pgTable(
     parkedReason: text('parked_reason'),
     currency: text('currency').notNull(),
     totalMinor: bigint('total_minor', { mode: 'number' }).notNull(),
-    counterpartyId: uuid('counterparty_id'),
+    /** The customer contractor the order belongs to. */
+    counterpartyId: uuid('counterparty_id').references(() => contractors.id, { onDelete: 'restrict' }),
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   },
@@ -132,31 +134,6 @@ export const channelDrift = pgTable(
   (table) => [index('channel_drift_open_idx').on(table.channel, table.resolvedAt)],
 )
 
-/**
- * The customer as the core knows them.
- *
- * Minimal on purpose: this change owns only enough of a counterparty to attach
- * an order and choose a price list. The rest arrives with the counterparties
- * capability.
- */
-export const counterparties = pgTable(
-  'counterparties',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    name: text('name').notNull(),
-    email: text('email'),
-    phone: text('phone'),
-    /** Determines which price list a channel presents to them. */
-    customerGroup: text('customer_group'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    index('counterparties_email_idx').on(table.email),
-    index('counterparties_phone_idx').on(table.phone),
-  ],
-)
-
 /** Which channel identity belongs to which counterparty. */
 export const counterpartyIdentities = pgTable(
   'counterparty_identities',
@@ -166,7 +143,7 @@ export const counterpartyIdentities = pgTable(
     externalId: text('external_id').notNull(),
     counterpartyId: uuid('counterparty_id')
       .notNull()
-      .references(() => counterparties.id, { onDelete: 'cascade' }),
+      .references(() => contractors.id, { onDelete: 'restrict' }),
     linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -188,7 +165,6 @@ export type ChannelPublicationRow = typeof channelPublications.$inferSelect
 export type ChannelInboxOrderRow = typeof channelInboxOrders.$inferSelect
 export type ChannelOutboundRow = typeof channelOutbound.$inferSelect
 export type ChannelDriftRow = typeof channelDrift.$inferSelect
-export type CounterpartyRow = typeof counterparties.$inferSelect
 
 /**
  * Payment facts as they reached the core.

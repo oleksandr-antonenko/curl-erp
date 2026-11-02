@@ -1,7 +1,11 @@
-import { and, eq, or } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
+import { recordChange } from '../change-feed/record.js'
+import { normaliseEmail, normalisePhone } from '../contractors/contractors.js'
+import { contractors } from '../contractors/schema.js'
 import type { Database } from '../db/client.js'
+import { type Actor, tryCurrentScope } from '../tenancy/context.js'
 import type { ChannelCustomer } from './contract.js'
-import { counterparties, counterpartyIdentities } from './schema.js'
+import { counterpartyIdentities } from './schema.js'
 
 export interface Counterparty {
   readonly id: string
@@ -20,18 +24,6 @@ export interface MatchingRules {
 
 const DEFAULT_RULES: Required<MatchingRules> = { byEmail: true, byPhone: true }
 
-/** Digits only, so `+380 (44) 123` and `380441 23` are the same number. */
-function normalisePhone(phone: string | undefined): string | null {
-  if (phone === undefined) return null
-  const digits = phone.replace(/\D/g, '')
-  return digits === '' ? null : digits
-}
-
-function normaliseEmail(email: string | undefined): string | null {
-  const trimmed = email?.trim().toLowerCase()
-  return trimmed === undefined || trimmed === '' ? null : trimmed
-}
-
 /**
  * Ties a channel's customer to the counterparty the core knows.
  *
@@ -47,9 +39,9 @@ export class ChannelCustomers {
 
   async findLinked(channel: string, externalId: string): Promise<Counterparty | null> {
     const [row] = await this.db
-      .select({ party: counterparties })
+      .select({ party: contractors })
       .from(counterpartyIdentities)
-      .innerJoin(counterparties, eq(counterparties.id, counterpartyIdentities.counterpartyId))
+      .innerJoin(contractors, eq(contractors.id, counterpartyIdentities.counterpartyId))
       .where(
         and(eq(counterpartyIdentities.channel, channel), eq(counterpartyIdentities.externalId, externalId)),
       )
@@ -57,23 +49,36 @@ export class ChannelCustomers {
     return row === undefined ? null : toCounterparty(row.party)
   }
 
-  /** An existing counterparty that matches by the configured rules. */
+  /**
+   * An existing customer that matches by the configured rules.
+   *
+   * Email first, compared in lower case. Phone next, compared on digits - but a
+   * phone match is only taken when the two records do not disagree about the
+   * email: two people sharing a salon's phone are still two people, and merging
+   * them would show one the other's orders.
+   */
   async match(customer: ChannelCustomer): Promise<Counterparty | null> {
     const email = this.rules.byEmail === false ? null : normaliseEmail(customer.email)
     const phone = this.rules.byPhone === false ? null : normalisePhone(customer.phone)
-    if (email === null && phone === null) return null
 
-    const conditions = [
-      email === null ? undefined : eq(counterparties.email, email),
-      phone === null ? undefined : eq(counterparties.phone, phone),
-    ].filter((condition) => condition !== undefined)
-
-    const [row] = await this.db
-      .select()
-      .from(counterparties)
-      .where(conditions.length === 1 ? conditions[0] : or(...conditions))
-      .limit(1)
-    return row === undefined ? null : toCounterparty(row)
+    if (email !== null) {
+      const [byEmail] = await this.db
+        .select()
+        .from(contractors)
+        .where(and(isCustomer, eq(contractors.email, email)))
+        .limit(1)
+      if (byEmail !== undefined) return toCounterparty(byEmail)
+    }
+    if (phone !== null) {
+      const candidates = await this.db
+        .select()
+        .from(contractors)
+        .where(and(isCustomer, eq(contractors.phone, phone)))
+        .limit(2)
+      const agreeing = candidates.filter((row) => email === null || row.email === null || row.email === email)
+      if (agreeing.length === 1 && agreeing[0] !== undefined) return toCounterparty(agreeing[0])
+    }
+    return null
   }
 
   /**
@@ -88,7 +93,7 @@ export class ChannelCustomers {
     if (linked !== null) return linked
 
     const matched = await this.match(customer)
-    const party = matched ?? (await this.create(customer))
+    const party = matched ?? (await this.create(channel, customer))
 
     await this.db
       .insert(counterpartyIdentities)
@@ -98,28 +103,43 @@ export class ChannelCustomers {
     return party
   }
 
-  private async create(customer: ChannelCustomer): Promise<Counterparty> {
-    const [row] = await this.db
-      .insert(counterparties)
-      .values({
-        name: customer.name ?? customer.email ?? customer.phone ?? 'Unnamed customer',
-        email: normaliseEmail(customer.email),
-        phone: normalisePhone(customer.phone),
-      })
-      .returning()
-    if (row === undefined) throw new Error('Failed to create counterparty')
-    return toCounterparty(row)
+  private async create(channel: string, customer: ChannelCustomer): Promise<Counterparty> {
+    const actor: Actor = tryCurrentScope()?.actor ?? { type: 'integration', id: channel }
+    return await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(contractors)
+        .values({
+          name: customer.name ?? customer.email ?? customer.phone ?? 'Unnamed customer',
+          roles: ['customer'],
+          email: normaliseEmail(customer.email),
+          phone: normalisePhone(customer.phone),
+          actorType: actor.type,
+          actorId: actor.id,
+        })
+        .returning()
+      if (row === undefined) throw new Error('Failed to create counterparty')
+      await recordChange(tx, { entityType: 'contractor', entityId: row.id, kind: 'created', actor })
+      return toCounterparty(row)
+    })
   }
 
-  /** Moves a counterparty into a group, which changes the prices they see. */
+  /** Moves a customer into a group, which changes the prices they see. */
   async setGroup(counterpartyId: string, group: string | null): Promise<Counterparty> {
-    const [row] = await this.db
-      .update(counterparties)
-      .set({ customerGroup: group, updatedAt: new Date() })
-      .where(eq(counterparties.id, counterpartyId))
-      .returning()
-    if (row === undefined) throw new Error(`No counterparty ${counterpartyId}`)
-    return toCounterparty(row)
+    return await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(contractors)
+        .set({ customerGroup: group, updatedAt: new Date() })
+        .where(eq(contractors.id, counterpartyId))
+        .returning()
+      if (row === undefined) throw new Error(`No counterparty ${counterpartyId}`)
+      await recordChange(tx, {
+        entityType: 'contractor',
+        entityId: row.id,
+        kind: 'updated',
+        changedFields: ['customerGroup'],
+      })
+      return toCounterparty(row)
+    })
   }
 
   /** The price list a channel should present to this identity. */
@@ -128,6 +148,8 @@ export class ChannelCustomers {
     return party?.customerGroup ?? null
   }
 }
+
+const isCustomer = sql`'customer' = any(${contractors.roles})`
 
 function toCounterparty(row: {
   id: string

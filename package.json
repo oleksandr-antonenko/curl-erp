@@ -21,7 +21,8 @@
     "./documents": "./dist/documents/index.js",
     "./stock": "./dist/stock/index.js",
     "./contractors": "./dist/contractors/index.js",
-    "./legal-entities": "./dist/legal-entities/index.js"
+    "./legal-entities": "./dist/legal-entities/index.js",
+    "./sales-orders": "./dist/sales-orders/index.js"
   },
   "scripts": {
     "build": "tsc --build",

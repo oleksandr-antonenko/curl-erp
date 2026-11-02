@@ -456,12 +456,25 @@ describe('sales orders', () => {
       const shipped = await person(() => sales.ship(id, '20450000000000'))
       expect(shipped.status).toBe('shipped')
 
-      const pending = await new ChannelOutbound(db).pending(CHANNEL)
+      const outbound = new ChannelOutbound(db, { baseBackoffMs: 0 })
+      const down = await outbound.dispatch(CHANNEL, async () => {
+        throw new Error('channel unreachable')
+      })
+      expect(down).toMatchObject({ sent: 0, failed: 3 })
+
+      const pending = await outbound.pending(CHANNEL)
       expect(pending.map((item) => item.payload)).toEqual([
         { externalOrderId: 'o-1', status: 'confirmed' },
         { externalOrderId: 'o-1', status: 'paid' },
         { externalOrderId: 'o-1', status: 'shipped', trackingReference: '20450000000000' },
       ])
+
+      const delivered: unknown[] = []
+      const back = await outbound.dispatch(CHANNEL, async (item) => {
+        delivered.push(item.payload)
+      })
+      expect(back).toMatchObject({ sent: 3, failed: 0, remaining: 0 })
+      expect(delivered).toHaveLength(3)
     })
   })
 

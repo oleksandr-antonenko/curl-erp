@@ -101,10 +101,7 @@ describe('customer import', () => {
   it('makes one customer of two accounts sharing an email in any case', async () => {
     const { report } = await run(
       new FakeCustomerSource({
-        customers: [
-          customer('7', { email: 'Olga@x.ua' }),
-          customer('12', { email: 'olga@x.ua' }),
-        ],
+        customers: [customer('7', { email: 'Olga@x.ua' }), customer('12', { email: 'olga@x.ua' })],
       }),
     )
     expect(report).toMatchObject({ imported: 1, merged: 1, skipped: 0, failed: 0 })

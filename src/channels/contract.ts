@@ -90,13 +90,32 @@ export interface ChannelCustomer {
   readonly name?: string
 }
 
+/** Where the goods go, as the customer gave it. Not parsed by the core. */
+export interface ChannelDelivery {
+  readonly recipientName?: string
+  readonly phone?: string
+  readonly city?: string
+  readonly address?: string
+  /** The channel's delivery method, mapped to the tenant's code by the adapter. */
+  readonly method?: string
+}
+
 export interface ChannelOrder {
   readonly externalId: string
   readonly placedAt: Date
   readonly currency: string
+  /** Everything the customer was charged: lines plus delivery. */
   readonly totalMinor: number
+  /** What delivery was charged, in minor units. Omitted means nothing. */
+  readonly shippingMinor?: number
   readonly lines: readonly ChannelOrderLine[]
   readonly customer: ChannelCustomer
+  /**
+   * The tenant's code for how the customer chose to pay, mapped by the adapter
+   * from the platform's own identifier. Omitted when the adapter has no mapping.
+   */
+  readonly paymentMethod?: string
+  readonly delivery?: ChannelDelivery
   readonly deliveryNote?: string
   readonly raw?: Readonly<Record<string, unknown>>
 }

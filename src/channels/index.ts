@@ -1,6 +1,7 @@
 export {
   type ChannelCapabilities,
   type ChannelCustomer,
+  type ChannelDelivery,
   ChannelError,
   type ChannelMedia,
   type ChannelOrder,
@@ -24,6 +25,7 @@ export {
 export {
   ChannelCustomers,
   type Counterparty,
+  type CustomerResolution,
   type MatchingRules,
 } from './customers.js'
 export { ChannelMappings, type MappedEntity } from './mappings.js'
@@ -39,6 +41,9 @@ export {
   type InboxState,
   type IntakeResult,
   type OrderIntakeOptions,
+  payloadToOrder,
+  type ResolveDecision,
+  totalsMismatch,
 } from './orders.js'
 export {
   ChannelOutbound,

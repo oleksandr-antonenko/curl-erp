@@ -353,10 +353,71 @@ describe('sales channels', () => {
     it('lets a person resolve a parked order', async () => {
       const orders = new ChannelOrders(db)
       await orders.receive(CHANNEL, [orderFor('o-4', 'unknown')])
+
+      // Accepting it as it stands would produce a line for no product at all.
+      await expect(orders.resolve(CHANNEL, 'o-4')).rejects.toThrow(/unknown variants/)
+
+      await new ChannelMappings(db).link(CHANNEL, 'variant', 'var-1', 'unknown')
       await orders.resolve(CHANNEL, 'o-4')
 
       expect((await orders.find(CHANNEL, 'o-4'))?.state).toBe('accepted')
+      expect((await orders.find(CHANNEL, 'o-4'))?.counterpartyId).not.toBeNull()
       expect(await orders.list(CHANNEL, 'parked')).toHaveLength(0)
+    })
+
+    it('parks an order whose lines and delivery do not make the total, stating the difference', async () => {
+      await new ChannelMappings(db).link(CHANNEL, 'variant', 'var-1', 'ext-var-1')
+      const orders = new ChannelOrders(db)
+      await orders.receive(CHANNEL, [
+        {
+          ...orderFor('o-6', 'ext-var-1'),
+          totalMinor: 100_050,
+          lines: [{ externalVariantId: 'ext-var-1', quantity: 2, unitPriceMinor: 50_000 }],
+        },
+        {
+          ...orderFor('o-7', 'ext-var-1'),
+          totalMinor: 108_000,
+          shippingMinor: 8_000,
+          lines: [{ externalVariantId: 'ext-var-1', quantity: 2, unitPriceMinor: 50_000 }],
+        },
+      ])
+      expect(await orders.find(CHANNEL, 'o-6')).toMatchObject({
+        state: 'parked',
+        parkedReason: expect.stringContaining('difference 50'),
+      })
+      expect(await orders.find(CHANNEL, 'o-7')).toMatchObject({ state: 'accepted', shippingMinor: 8_000 })
+    })
+
+    it('carries the payment method the customer chose', async () => {
+      await new ChannelMappings(db).link(CHANNEL, 'variant', 'var-1', 'ext-var-1')
+      const orders = new ChannelOrders(db)
+      await orders.receive(CHANNEL, [{ ...orderFor('o-8', 'ext-var-1'), paymentMethod: 'card_link' }])
+      expect((await orders.find(CHANNEL, 'o-8'))?.paymentMethod).toBe('card_link')
+    })
+
+    it('waits for a person when the customer only matches someone by email', async () => {
+      await new ChannelMappings(db).link(CHANNEL, 'variant', 'var-1', 'ext-var-1')
+      const customers = new ChannelCustomers(db)
+      const { counterparty: known } = await customers.resolve('previous-shop', {
+        externalId: 'legacy-1',
+        email: 'buyer@example.com',
+      })
+      await customers.setGroup(known.id, 'wholesale')
+
+      const orders = new ChannelOrders(db)
+      await orders.receive(CHANNEL, [orderFor('o-9', 'ext-var-1')])
+      expect(await orders.find(CHANNEL, 'o-9')).toMatchObject({
+        state: 'parked',
+        parkedReason: 'customer match needs confirmation',
+        suggestedCounterpartyId: known.id,
+        counterpartyId: null,
+      })
+      // Until confirmed, the identity is quoted the default list, not wholesale.
+      expect(await customers.priceListFor(CHANNEL, 'cust-1')).toBeNull()
+
+      await orders.resolve(CHANNEL, 'o-9', { counterpartyId: known.id })
+      expect(await orders.find(CHANNEL, 'o-9')).toMatchObject({ state: 'accepted', counterpartyId: known.id })
+      expect(await customers.priceListFor(CHANNEL, 'cust-1')).toBe('wholesale')
     })
 
     it('announces every arrival in the change feed', async () => {
@@ -410,19 +471,29 @@ describe('sales channels', () => {
   })
 
   describe('customers', () => {
-    it('recognises a returning customer by email', async () => {
+    it('suggests, but does not link, a returning customer found by email', async () => {
       const customers = new ChannelCustomers(db)
       const first = await customers.resolve(CHANNEL, {
         externalId: 'c-1',
         email: 'repeat@example.com',
       })
+      expect(first.kind).toBe('created')
+
       const again = await customers.resolve('marketplace', {
         externalId: 'other-id',
         email: 'Repeat@Example.com',
       })
-
-      expect(again.id).toBe(first.id)
+      // The marketplace did not prove this person owns the address.
+      expect(again).toMatchObject({ kind: 'suggested', counterparty: { id: first.counterparty.id } })
+      expect(await customers.findLinked('marketplace', 'other-id')).toBeNull()
       expect(await db.select().from(counterparties)).toHaveLength(1)
+
+      // Once a person confirms, the identity is that customer from then on.
+      await customers.link('marketplace', 'other-id', first.counterparty.id)
+      expect(await customers.resolve('marketplace', { externalId: 'other-id' })).toMatchObject({
+        kind: 'linked',
+        counterparty: { id: first.counterparty.id },
+      })
     })
 
     it('recognises a returning customer by phone, however it is written', async () => {
@@ -435,7 +506,7 @@ describe('sales channels', () => {
         externalId: 'c-3',
         phone: '380441234567',
       })
-      expect(again.id).toBe(first.id)
+      expect(again).toMatchObject({ kind: 'suggested', counterparty: { id: first.counterparty.id } })
     })
 
     it('does not merge two people who share a phone but not an email', async () => {
@@ -450,7 +521,8 @@ describe('sales channels', () => {
         email: 'iryna@salon.ua',
         phone: '380671234567',
       })
-      expect(iryna.id).not.toBe(olga.id)
+      expect(iryna.kind).toBe('created')
+      expect(iryna.counterparty.id).not.toBe(olga.counterparty.id)
     })
 
     it('creates someone new when nothing matches', async () => {
@@ -462,7 +534,7 @@ describe('sales channels', () => {
 
     it('gives a wholesale customer their own price list', async () => {
       const customers = new ChannelCustomers(db)
-      const party = await customers.resolve(CHANNEL, {
+      const { counterparty: party } = await customers.resolve(CHANNEL, {
         externalId: 'c-6',
         email: 'salon@example.com',
       })

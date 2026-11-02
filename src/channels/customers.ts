@@ -15,6 +15,11 @@ export interface Counterparty {
   readonly customerGroup: string | null
 }
 
+export type CustomerResolution =
+  | { readonly kind: 'linked'; readonly counterparty: Counterparty }
+  | { readonly kind: 'created'; readonly counterparty: Counterparty }
+  | { readonly kind: 'suggested'; readonly counterparty: Counterparty }
+
 export interface MatchingRules {
   /** Treat an identical email as the same person. */
   readonly byEmail?: boolean
@@ -82,25 +87,50 @@ export class ChannelCustomers {
   }
 
   /**
-   * The counterparty behind a channel identity, creating one if needed.
+   * The customer behind a channel identity, as far as it can be decided alone.
    *
-   * Always links, even when the counterparty already existed: the next order
-   * from that identity must reach the same customer record, or their history
-   * and their prices split in two.
+   * An identity already linked resolves to its customer. One that matches
+   * nobody gets a new customer, linked at once - there is nobody it could be
+   * confused with. One that matches an existing customer by email or phone is
+   * only *suggested*: the channel did not prove the person owns that email, and
+   * linking on a match would hand a stranger a wholesale customer's prices and
+   * order history. A person confirms the suggestion with `link`.
    */
-  async resolve(channel: string, customer: ChannelCustomer): Promise<Counterparty> {
+  async resolve(channel: string, customer: ChannelCustomer): Promise<CustomerResolution> {
     const linked = await this.findLinked(channel, customer.externalId)
-    if (linked !== null) return linked
+    if (linked !== null) return { kind: 'linked', counterparty: linked }
 
     const matched = await this.match(customer)
-    const party = matched ?? (await this.create(channel, customer))
+    if (matched !== null) return { kind: 'suggested', counterparty: matched }
 
+    const created = await this.create(channel, customer)
+    await this.link(channel, customer.externalId, created.id)
+    return { kind: 'created', counterparty: created }
+  }
+
+  /** Records that a channel identity is this customer. Idempotent. */
+  async link(channel: string, externalId: string, counterpartyId: string): Promise<Counterparty> {
+    const [party] = await this.db
+      .select()
+      .from(contractors)
+      .where(eq(contractors.id, counterpartyId))
+      .limit(1)
+    if (party === undefined) throw new Error(`No counterparty ${counterpartyId}`)
     await this.db
       .insert(counterpartyIdentities)
-      .values({ channel, externalId: customer.externalId, counterpartyId: party.id })
+      .values({ channel, externalId, counterpartyId })
       .onConflictDoNothing()
+    const linked = await this.findLinked(channel, externalId)
+    if (linked === null || linked.id !== counterpartyId) {
+      throw new Error(`Identity ${channel}:${externalId} is already linked to another customer`)
+    }
+    return linked
+  }
 
-    return party
+  /** A new customer for an identity a person decided is nobody we know. */
+  async createAndLink(channel: string, customer: ChannelCustomer): Promise<Counterparty> {
+    const created = await this.create(channel, customer)
+    return await this.link(channel, customer.externalId, created.id)
   }
 
   private async create(channel: string, customer: ChannelCustomer): Promise<Counterparty> {

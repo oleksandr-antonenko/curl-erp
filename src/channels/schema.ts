@@ -84,6 +84,17 @@ export const channelInboxOrders = pgTable(
     parkedReason: text('parked_reason'),
     currency: text('currency').notNull(),
     totalMinor: bigint('total_minor', { mode: 'number' }).notNull(),
+    shippingMinor: bigint('shipping_minor', { mode: 'number' }).notNull().default(0),
+    /** The tenant's payment method code, as the adapter mapped it. */
+    paymentMethod: text('payment_method'),
+    /**
+     * An existing customer this order's identity seems to be, by email or
+     * phone. A suggestion for a person to confirm - never linked on its own,
+     * because a matching email proves nothing about who placed the order.
+     */
+    suggestedCounterpartyId: uuid('suggested_counterparty_id').references(() => contractors.id, {
+      onDelete: 'restrict',
+    }),
     /** The customer contractor the order belongs to. */
     counterpartyId: uuid('counterparty_id').references(() => contractors.id, { onDelete: 'restrict' }),
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),

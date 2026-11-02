@@ -21,7 +21,18 @@ export interface InboxOrder {
   readonly totalMinor: number
   readonly currency: string
   readonly counterpartyId: string | null
+  readonly suggestedCounterpartyId: string | null
+  readonly paymentMethod: string | null
+  readonly shippingMinor: number
   readonly payload: Record<string, unknown>
+}
+
+/** What a person decided about a parked order's customer. */
+export interface ResolveDecision {
+  /** Link the order's identity to this existing customer. */
+  readonly counterpartyId?: string
+  /** The identity is somebody new. */
+  readonly newCustomer?: boolean
 }
 
 export interface IntakeResult {
@@ -88,7 +99,7 @@ export class ChannelOrders {
         continue
       }
 
-      const { state, reason, counterpartyId } = await this.assess(channel, order)
+      const { state, reason, counterpartyId, suggestedCounterpartyId } = await this.assess(channel, order)
 
       await this.db.transaction(async (tx) => {
         await tx.insert(channelInboxOrders).values({
@@ -99,6 +110,9 @@ export class ChannelOrders {
           parkedReason: reason ?? null,
           currency: order.currency,
           totalMinor: order.totalMinor,
+          shippingMinor: order.shippingMinor ?? 0,
+          paymentMethod: order.paymentMethod ?? null,
+          suggestedCounterpartyId: suggestedCounterpartyId ?? null,
           counterpartyId,
           payload: { ...order, placedAt: order.placedAt.toISOString() },
         })
@@ -123,7 +137,12 @@ export class ChannelOrders {
   private async assess(
     channel: string,
     order: ChannelOrder,
-  ): Promise<{ state: InboxState; reason?: string; counterpartyId: string | null }> {
+  ): Promise<{
+    state: InboxState
+    reason?: string
+    counterpartyId: string | null
+    suggestedCounterpartyId?: string
+  }> {
     const externalVariantIds = order.lines.map((line) => line.externalVariantId)
     const localIds = await this.mappings.localIdsFor(channel, 'variant', externalVariantIds)
 
@@ -136,7 +155,19 @@ export class ChannelOrders {
       }
     }
 
-    const counterparty = await this.customers.resolve(channel, order.customer)
+    const mismatch = totalsMismatch(order)
+    if (mismatch !== null) return { state: 'parked', reason: mismatch, counterpartyId: null }
+
+    const resolution = await this.customers.resolve(channel, order.customer)
+    if (resolution.kind === 'suggested') {
+      return {
+        state: 'parked',
+        reason: 'customer match needs confirmation',
+        counterpartyId: null,
+        suggestedCounterpartyId: resolution.counterparty.id,
+      }
+    }
+    const counterparty = resolution.counterparty
 
     if (this.options.stock !== undefined) {
       const wanted = new Map<string, number>()
@@ -186,12 +217,63 @@ export class ChannelOrders {
     return rows.map(toInboxOrder)
   }
 
-  /** Marks a parked order as dealt with, once a person has sorted it out. */
-  async resolve(channel: string, externalId: string): Promise<void> {
+  /**
+   * Accepts a parked or oversold order once a person has sorted it out.
+   *
+   * Refuses while a line still names a variant nobody mapped, or while the
+   * totals still disagree: accepting those would produce a document that is
+   * wrong. For an order waiting on a customer match the person says who the
+   * customer is - the suggested one, another, or somebody new - and that
+   * identity is linked from then on.
+   */
+  async resolve(channel: string, externalId: string, decision: ResolveDecision = {}): Promise<InboxOrder> {
+    const found = await this.find(channel, externalId)
+    if (found === null) throw new Error(`No order ${channel}:${externalId}`)
+    if (found.state === 'accepted') return found
+
+    const order = payloadToOrder(found.payload)
+    const localIds = await this.mappings.localIdsFor(
+      channel,
+      'variant',
+      order.lines.map((line) => line.externalVariantId),
+    )
+    const unmapped = order.lines.filter((line) => !localIds.has(line.externalVariantId))
+    if (unmapped.length > 0) {
+      throw new Error(
+        `Order ${externalId} still names unknown variants: ${unmapped.map((l) => l.externalVariantId).join(', ')}`,
+      )
+    }
+    const mismatch = totalsMismatch(order)
+    if (mismatch !== null) throw new Error(`Order ${externalId} cannot be accepted: ${mismatch}`)
+
+    let counterpartyId = found.counterpartyId
+    if (counterpartyId === null) {
+      const linked = await this.customers.findLinked(channel, order.customer.externalId)
+      if (linked !== null) counterpartyId = linked.id
+      else if (decision.counterpartyId !== undefined) {
+        counterpartyId = (
+          await this.customers.link(channel, order.customer.externalId, decision.counterpartyId)
+        ).id
+      } else if (decision.newCustomer === true) {
+        counterpartyId = (await this.customers.createAndLink(channel, order.customer)).id
+      } else {
+        const resolution = await this.customers.resolve(channel, order.customer)
+        if (resolution.kind === 'suggested') {
+          throw new Error(
+            `Order ${externalId} waits for a person to say who the customer is (suggested: ${resolution.counterparty.id})`,
+          )
+        }
+        counterpartyId = resolution.counterparty.id
+      }
+    }
+
     await this.db
       .update(channelInboxOrders)
-      .set({ state: 'accepted', resolvedAt: new Date(), parkedReason: null })
+      .set({ state: 'accepted', resolvedAt: new Date(), parkedReason: null, counterpartyId })
       .where(and(eq(channelInboxOrders.channel, channel), eq(channelInboxOrders.externalId, externalId)))
+    const resolved = await this.find(channel, externalId)
+    if (resolved === null) throw new Error(`No order ${channel}:${externalId}`)
+    return resolved
   }
 
   /**
@@ -235,6 +317,9 @@ function toInboxOrder(row: {
   totalMinor: number
   currency: string
   counterpartyId: string | null
+  suggestedCounterpartyId: string | null
+  paymentMethod: string | null
+  shippingMinor: number
   payload: Record<string, unknown>
 }): InboxOrder {
   return {
@@ -248,6 +333,31 @@ function toInboxOrder(row: {
     totalMinor: row.totalMinor,
     currency: row.currency,
     counterpartyId: row.counterpartyId,
+    suggestedCounterpartyId: row.suggestedCounterpartyId,
+    paymentMethod: row.paymentMethod,
+    shippingMinor: row.shippingMinor,
     payload: row.payload,
   }
+}
+
+/**
+ * Says what is wrong when lines plus delivery do not make the total, or null.
+ *
+ * Never adjusted: a kopeck that does not add up is either a channel bug or a
+ * discount we do not model yet, and a person should see which.
+ */
+export function totalsMismatch(
+  order: Pick<ChannelOrder, 'lines' | 'shippingMinor' | 'totalMinor'>,
+): string | null {
+  const lines = order.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0)
+  const shipping = order.shippingMinor ?? 0
+  const difference = order.totalMinor - lines - shipping
+  if (difference === 0) return null
+  return `totals do not reconcile: lines ${lines} + delivery ${shipping} = ${lines + shipping}, total ${order.totalMinor}, difference ${difference}`
+}
+
+/** The order as it was received, read back from the inbox payload. */
+export function payloadToOrder(payload: Record<string, unknown>): ChannelOrder {
+  const raw = payload as unknown as ChannelOrder & { placedAt: string | Date }
+  return { ...raw, placedAt: new Date(raw.placedAt) }
 }

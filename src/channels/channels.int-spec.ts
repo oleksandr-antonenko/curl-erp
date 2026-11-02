@@ -7,6 +7,7 @@ import { contractors as counterparties } from '../contractors/schema.js'
 import type { Database } from '../db/client.js'
 import { createTenantFixture, InMemoryStock, type TenantFixture } from '../testing/index.js'
 import type { ChannelOrder, ChannelProductInput } from './contract.js'
+import { ChannelCustomerGroups } from './customer-groups.js'
 import { ChannelCustomers } from './customers.js'
 import { ChannelMappings } from './mappings.js'
 import { MemoryChannelAdapter } from './memory-adapter.js'
@@ -549,6 +550,43 @@ describe('sales channels', () => {
       await strict.resolve(CHANNEL, { externalId: 'c-7', email: 'same@example.com' })
       await strict.resolve(CHANNEL, { externalId: 'c-8', email: 'same@example.com' })
       expect(await db.select().from(counterparties)).toHaveLength(2)
+    })
+  })
+
+  describe('customer groups in the channel', () => {
+    it('tells the channel a customer’s group when they are linked and when it changes', async () => {
+      const customers = new ChannelCustomers(db)
+      const { counterparty } = await customers.resolve(CHANNEL, {
+        externalId: 'cus-g1',
+        email: 'g1@example.com',
+      })
+      await customers.setGroup(counterparty.id, 'professional')
+
+      const adapter = new MemoryChannelAdapter({ id: CHANNEL })
+      const sent = await new ChannelOutbound(db).dispatch(CHANNEL, async (item) => {
+        if (item.kind === 'customer_group') await adapter.publishCustomerGroups([item.payload as never])
+      })
+      expect(sent.sent).toBeGreaterThan(0)
+      expect(adapter.customerGroups.get('cus-g1')).toBe('professional')
+    })
+
+    it('puts back a group someone changed by hand in the channel, and reports it', async () => {
+      const customers = new ChannelCustomers(db)
+      const { counterparty } = await customers.resolve(CHANNEL, {
+        externalId: 'cus-g2',
+        email: 'g2@example.com',
+      })
+      await customers.setGroup(counterparty.id, null)
+
+      const adapter = new MemoryChannelAdapter({ id: CHANNEL })
+      adapter.customerGroups.set('cus-g2', 'professional')
+
+      const groups = new ChannelCustomerGroups(db)
+      expect(await groups.reconcile(CHANNEL, adapter)).toEqual({ checked: 1, corrected: 1 })
+      expect(adapter.customerGroups.get('cus-g2')).toBeNull()
+      expect(await groups.openDrift(CHANNEL)).toEqual([
+        expect.objectContaining({ subject: 'cus-g2', expected: null, actual: 'professional' }),
+      ])
     })
   })
 

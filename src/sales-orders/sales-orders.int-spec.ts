@@ -510,9 +510,10 @@ describe('sales orders', () => {
       const down = await outbound.dispatch(CHANNEL, async () => {
         throw new Error('channel unreachable')
       })
-      expect(down).toMatchObject({ sent: 0, failed: 3 })
+      // A new customer's group goes out on the same queue; only order statuses matter here.
+      expect(down.sent).toBe(0)
 
-      const pending = await outbound.pending(CHANNEL)
+      const pending = (await outbound.pending(CHANNEL)).filter((item) => item.kind === 'order_status')
       expect(pending.map((item) => item.payload)).toEqual([
         { externalOrderId: 'o-1', status: 'confirmed' },
         { externalOrderId: 'o-1', status: 'paid' },
@@ -521,9 +522,9 @@ describe('sales orders', () => {
 
       const delivered: unknown[] = []
       const back = await outbound.dispatch(CHANNEL, async (item) => {
-        delivered.push(item.payload)
+        if (item.kind === 'order_status') delivered.push(item.payload)
       })
-      expect(back).toMatchObject({ sent: 3, failed: 0, remaining: 0 })
+      expect(back).toMatchObject({ failed: 0, remaining: 0 })
       expect(delivered).toHaveLength(3)
     })
   })

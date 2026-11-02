@@ -208,6 +208,12 @@ export class ChannelSync {
         await adapter.publishOrderStatus(item.payload as never)
         return
       }
+
+      case 'customer_group': {
+        if (adapter.publishCustomerGroups === undefined) return
+        await adapter.publishCustomerGroups([item.payload as never])
+        return
+      }
     }
   }
 

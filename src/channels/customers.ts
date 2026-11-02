@@ -5,6 +5,7 @@ import { contractors } from '../contractors/schema.js'
 import type { Database } from '../db/client.js'
 import { type Actor, tryCurrentScope } from '../tenancy/context.js'
 import type { ChannelCustomer } from './contract.js'
+import { ChannelCustomerGroups } from './customer-groups.js'
 import { counterpartyIdentities } from './schema.js'
 
 export interface Counterparty {
@@ -124,6 +125,8 @@ export class ChannelCustomers {
     if (linked === null || linked.id !== counterpartyId) {
       throw new Error(`Identity ${channel}:${externalId} is already linked to another customer`)
     }
+    // The channel learns the customer's group the moment the link exists.
+    await new ChannelCustomerGroups(this.db).project(counterpartyId)
     return linked
   }
 
@@ -155,21 +158,26 @@ export class ChannelCustomers {
 
   /** Moves a customer into a group, which changes the prices they see. */
   async setGroup(counterpartyId: string, group: string | null): Promise<Counterparty> {
-    return await this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .update(contractors)
-        .set({ customerGroup: group, updatedAt: new Date() })
-        .where(eq(contractors.id, counterpartyId))
-        .returning()
-      if (row === undefined) throw new Error(`No counterparty ${counterpartyId}`)
-      await recordChange(tx, {
-        entityType: 'contractor',
-        entityId: row.id,
-        kind: 'updated',
-        changedFields: ['customerGroup'],
+    return await this.db
+      .transaction(async (tx) => {
+        const [row] = await tx
+          .update(contractors)
+          .set({ customerGroup: group, updatedAt: new Date() })
+          .where(eq(contractors.id, counterpartyId))
+          .returning()
+        if (row === undefined) throw new Error(`No counterparty ${counterpartyId}`)
+        await recordChange(tx, {
+          entityType: 'contractor',
+          entityId: row.id,
+          kind: 'updated',
+          changedFields: ['customerGroup'],
+        })
+        return toCounterparty(row)
       })
-      return toCounterparty(row)
-    })
+      .then(async (party) => {
+        await new ChannelCustomerGroups(this.db).project(party.id)
+        return party
+      })
   }
 
   /** The price list a channel should present to this identity. */

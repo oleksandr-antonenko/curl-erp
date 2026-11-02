@@ -141,6 +141,14 @@ export interface ChannelStockReport {
  * channel that creates a second product on the second call turns a network
  * hiccup into a duplicate listing.
  */
+/** Which customer group a channel customer belongs to, as the core sees it. */
+export interface ChannelCustomerGroupMembership {
+  /** The channel's own customer identifier. */
+  readonly externalCustomerId: string
+  /** Our customer group code, or null for none. */
+  readonly group: string | null
+}
+
 export interface SalesChannelAdapter {
   /** Stable identifier, e.g. `storefront`. Used in mappings and in the queue. */
   readonly id: string
@@ -163,6 +171,17 @@ export interface SalesChannelAdapter {
 
   /** The channel's own view of stock, for reconciliation. */
   fetchStock?(): Promise<readonly ChannelStockReport[]>
+
+  /**
+   * Puts customers into the group the core holds for them, and out of every
+   * other group the core manages. Present only where `customerGroups` is true.
+   */
+  publishCustomerGroups?(memberships: readonly ChannelCustomerGroupMembership[]): Promise<void>
+
+  /** The group the channel currently holds for each customer, for reconciliation. */
+  fetchCustomerGroups?(
+    externalCustomerIds: readonly string[],
+  ): Promise<readonly ChannelCustomerGroupMembership[]>
 
   /** Called once at startup. A failure here marks the channel unavailable. */
   connect?(): Promise<void>

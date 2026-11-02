@@ -1,6 +1,7 @@
 export {
   type ChannelCapabilities,
   type ChannelCustomer,
+  type ChannelCustomerGroupMembership,
   type ChannelDelivery,
   ChannelError,
   type ChannelMedia,
@@ -22,6 +23,7 @@ export {
   runChannelContractTests,
   type TestPrimitives,
 } from './contract-tests.js'
+export { ChannelCustomerGroups, type GroupReconciliation } from './customer-groups.js'
 export {
   ChannelCustomers,
   type Counterparty,

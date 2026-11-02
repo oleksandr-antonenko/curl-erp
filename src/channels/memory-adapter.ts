@@ -1,5 +1,6 @@
 import {
   type ChannelCapabilities,
+  type ChannelCustomerGroupMembership,
   ChannelError,
   type ChannelOrder,
   type ChannelOrderStatusUpdate,
@@ -47,6 +48,8 @@ export class MemoryChannelAdapter implements SalesChannelAdapter {
    */
   readonly stockByVariant = new Map<string, number>()
   readonly statuses: ChannelOrderStatusUpdate[] = []
+  /** Customer id to group, as this channel holds it. */
+  readonly customerGroups = new Map<string, string | null>()
   orders: ChannelOrder[] = []
   /** Every call recorded, so tests can assert what the core actually sent. */
   readonly calls: { method: string; at: Date }[] = []
@@ -142,6 +145,22 @@ export class MemoryChannelAdapter implements SalesChannelAdapter {
   async publishOrderStatus(update: ChannelOrderStatusUpdate): Promise<void> {
     this.guard('publishOrderStatus')
     this.statuses.push(update)
+  }
+
+  async publishCustomerGroups(memberships: readonly ChannelCustomerGroupMembership[]): Promise<void> {
+    this.guard('publishCustomerGroups')
+    for (const membership of memberships)
+      this.customerGroups.set(membership.externalCustomerId, membership.group)
+  }
+
+  async fetchCustomerGroups(
+    externalCustomerIds: readonly string[],
+  ): Promise<readonly ChannelCustomerGroupMembership[]> {
+    this.guard('fetchCustomerGroups')
+    return externalCustomerIds.map((id) => ({
+      externalCustomerId: id,
+      group: this.customerGroups.get(id) ?? null,
+    }))
   }
 
   async fetchStock(): Promise<readonly ChannelStockReport[]> {

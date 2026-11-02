@@ -2,7 +2,7 @@ import { and, asc, count, eq, lte, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { channelOutbound } from './schema.js'
 
-export type OutboundKind = 'product' | 'unpublish' | 'stock' | 'price' | 'order_status'
+export type OutboundKind = 'product' | 'unpublish' | 'stock' | 'price' | 'order_status' | 'customer_group'
 
 export interface OutboundItem {
   readonly id: string

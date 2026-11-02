@@ -85,6 +85,13 @@
       "when": 1789242755202,
       "tag": "0011_supplier_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793623821526,
+      "tag": "0012_legal_entities",
+      "breakpoints": true
     }
   ]
 }

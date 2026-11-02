@@ -20,7 +20,8 @@
     "./supplier-receipts": "./dist/supplier-receipts/index.js",
     "./documents": "./dist/documents/index.js",
     "./stock": "./dist/stock/index.js",
-    "./contractors": "./dist/contractors/index.js"
+    "./contractors": "./dist/contractors/index.js",
+    "./legal-entities": "./dist/legal-entities/index.js"
   },
   "scripts": {
     "build": "tsc --build",

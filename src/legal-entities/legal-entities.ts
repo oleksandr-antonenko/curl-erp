@@ -255,13 +255,23 @@ export class LegalEntities {
     }))
   }
 
+  /** Stops the entity taking new documents; its history stays. */
   async deactivate(id: string): Promise<LegalEntity> {
-    const actor = requireActor('Deactivating a legal entity')
+    return await this.setActive(id, false, 'Deactivating a legal entity')
+  }
+
+  /** Lets a deactivated entity take new documents again. */
+  async reactivate(id: string): Promise<LegalEntity> {
+    return await this.setActive(id, true, 'Reactivating a legal entity')
+  }
+
+  private async setActive(id: string, active: boolean, what: string): Promise<LegalEntity> {
+    const actor = requireActor(what)
     return await this.db.transaction(async (tx) => {
       const [row] = await tx
         .update(legalEntities)
-        .set({ isActive: false, updatedAt: new Date() })
-        .where(and(eq(legalEntities.id, id), eq(legalEntities.isActive, true)))
+        .set({ isActive: active, updatedAt: new Date() })
+        .where(and(eq(legalEntities.id, id), eq(legalEntities.isActive, !active)))
         .returning()
       if (row === undefined) {
         const found = await this.find(id)
@@ -271,8 +281,8 @@ export class LegalEntities {
       await tx.insert(legalEntityChanges).values({
         legalEntityId: id,
         field: 'isActive',
-        oldValue: 'true',
-        newValue: 'false',
+        oldValue: String(!active),
+        newValue: String(active),
         actorType: actor.type,
         actorId: actor.id,
       })

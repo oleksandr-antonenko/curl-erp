@@ -87,6 +87,10 @@ describe('legal entities', () => {
     await scoped(() => entities.deactivate(entity.id))
     expect(await entities.list()).toHaveLength(0)
     expect((await entities.find(entity.id))?.isActive).toBe(false)
+
+    await scoped(() => entities.reactivate(entity.id))
+    expect((await entities.list()).map((found) => found.id)).toEqual([entity.id])
+    expect((await entities.changes(entity.id)).map((change) => change.newValue)).toEqual(['true', 'false'])
   })
 
   it('suggests the default for a method, and nothing for a deactivated default', async () => {
